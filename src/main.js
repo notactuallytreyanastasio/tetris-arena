@@ -25,6 +25,7 @@
 
   function overlayState() {
     if (game.over) return 'over';
+    if (game.paused) return 'paused';
     return null;
   }
 
@@ -50,6 +51,9 @@
       if (state === 'over') {
         hud.overlayTitle.textContent = 'Game over';
         hud.overlayHint.textContent = 'R to restart';
+      } else if (state === 'paused') {
+        hud.overlayTitle.textContent = 'Paused';
+        hud.overlayHint.textContent = 'P to resume';
       }
     }
   }

@@ -104,7 +104,11 @@ function makeRenderer({ well, hold, next }) {
       if (gy !== game.piece.y) {
         for (const [x, y] of pieceCells({ ...game.piece, y: gy })) drawGhostCell(x, y, color);
       }
+      // Lock pulse (idea from agent-5): a resting piece fades as its lock
+      // delay runs out, so "about to settle" is visible, not a surprise.
+      ctx.globalAlpha = 1 - 0.5 * game.lockProgress();
       for (const [x, y] of pieceCells(game.piece)) drawCell(x, y, color);
+      ctx.globalAlpha = 1;
     }
   }
 

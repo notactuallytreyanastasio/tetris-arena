@@ -16,6 +16,8 @@ const COMBO_SCORE = 50;
 // T-spin scores by lines cleared (0..3). Mini T-spins clear at most 2.
 const TSPIN_SCORE = [400, 800, 1200, 1600];
 const TSPIN_MINI_SCORE = [100, 200, 400];
+// Perfect clear (board empty after the clear) by lines cleared, x level.
+const PERFECT_SCORE = [0, 800, 1200, 1800, 2000];
 const NEXT_PREVIEW = 5;
 // Full rows stay on screen this long, drawn bright, before they collapse.
 const CLEAR_FLASH_MS = 120;
@@ -54,6 +56,7 @@ class Game {
     this.score = 0;
     this.lines = 0;
     this.over = false;
+    this.paused = false;
     this.softDropping = false;
     this.gravityAcc = 0;
     this.lockAcc = 0;
@@ -132,8 +135,20 @@ class Game {
     }
   }
 
+  setPaused(on) {
+    if (this.over) return;
+    this.paused = on;
+    if (on) this.softDropping = false;
+  }
+
+  // Fraction of the lock delay used up, 0..1, for the renderer's pulse.
+  lockProgress() {
+    if (!this.piece || !this.grounded()) return 0;
+    return Math.min(1, this.lockAcc / LOCK_DELAY_MS);
+  }
+
   move(dx) {
-    if (!this.piece || this.over) return false;
+    if (!this.piece || this.over || this.paused) return false;
     const ok = this.tryMove(dx, 0);
     if (ok) {
       this.lastRotation = null;
@@ -145,7 +160,7 @@ class Game {
   // dir = +1 clockwise, -1 counter-clockwise. Walk the SRS kick list for
   // this transition; the first offset that fits is the rotation.
   rotate(dir) {
-    if (!this.piece || this.over) return false;
+    if (!this.piece || this.over || this.paused) return false;
     const from = this.piece.rot;
     const to = (from + dir + 4) % 4;
     const kicks = kicksFor(this.piece.type, from, to);
@@ -163,7 +178,7 @@ class Game {
   // Park the current piece and bring out the parked one (or the next piece
   // if nothing is parked). Once per piece: holdUsed is cleared by spawn().
   holdPiece() {
-    if (!this.piece || this.over || this.holdUsed) return false;
+    if (!this.piece || this.over || this.paused || this.holdUsed) return false;
     const parked = this.hold;
     this.hold = this.piece.type;
     this.piece = null;
@@ -180,7 +195,7 @@ class Game {
   }
 
   hardDrop() {
-    if (!this.piece || this.over) return;
+    if (!this.piece || this.over || this.paused) return;
     let rows = 0;
     while (this.tryMove(0, 1)) rows++;
     if (rows > 0) this.lastRotation = null;
@@ -233,7 +248,7 @@ class Game {
   // Guideline scoring: base per line count x level; T-spins use their own
   // table; a "difficult" clear (tetris or T-spin with lines) after another
   // pays 1.5x; every consecutive clearing lock adds 50 x combo x level.
-  award(n, spin) {
+  award(n, spin, perfect = false) {
     let points, label;
     if (spin === 'full') {
       points = TSPIN_SCORE[n];
@@ -255,6 +270,12 @@ class Game {
         points += COMBO_SCORE * this.combo * this.level;
         label += ' x' + (this.combo + 1);
       }
+      // Perfect clear (from agent-8): nothing left on the board is worth
+      // more than the lines themselves.
+      if (perfect) {
+        points += PERFECT_SCORE[n] * this.level;
+        label = 'Perfect clear ' + label;
+      }
       this.lines += n;
       this.level = 1 + Math.floor(this.lines / LINES_PER_LEVEL);
     }
@@ -266,12 +287,13 @@ class Game {
     const { rows, spin } = this.clearing;
     removeRows(this.board, rows);
     this.clearing = null;
-    this.award(rows.length, spin);
+    const perfect = this.board.every((row) => row.every((c) => c === 0));
+    this.award(rows.length, spin, perfect);
     this.spawn();
   }
 
   update(dt) {
-    if (this.over) return;
+    if (this.over || this.paused) return;
     this.clock += dt;
 
     if (this.clearing) {
