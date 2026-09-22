@@ -32,11 +32,21 @@ function lockPiece(board, piece) {
   for (const [x, y] of pieceCells(piece)) board[y][x] = id;
 }
 
-// Remove every full row, push blank rows in at the top, return how many went.
-function clearLines(board) {
-  const kept = board.filter((row) => row.some((c) => c === 0));
-  const cleared = board.length - kept.length;
-  for (let i = 0; i < cleared; i++) kept.unshift(new Array(COLS).fill(0));
+// Indices of every full row, top to bottom.
+function fullRows(board) {
+  const rows = [];
+  for (let y = 0; y < board.length; y++) {
+    if (board[y].every((c) => c !== 0)) rows.push(y);
+  }
+  return rows;
+}
+
+// Remove the given rows and push blank rows in at the top. Split from
+// fullRows() so the game can hold the full rows on screen for a flash
+// before they collapse.
+function removeRows(board, rows) {
+  const drop = new Set(rows);
+  const kept = board.filter((_, y) => !drop.has(y));
+  while (kept.length < board.length) kept.unshift(new Array(COLS).fill(0));
   board.splice(0, board.length, ...kept);
-  return cleared;
 }

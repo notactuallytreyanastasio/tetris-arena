@@ -51,25 +51,18 @@ function makeRenderer(canvas) {
     ctx.fillRect(0, 0, W, H);
     drawGrid();
 
+    // Rows mid-clear are drawn white so the clear reads as an event.
+    const flashing = game.clearing ? new Set(game.clearing.rows) : null;
     for (let y = 0; y < TOTAL_ROWS; y++) {
       for (let x = 0; x < COLS; x++) {
         const id = game.board[y][x];
-        if (id) drawCell(x, y, COLORS[id]);
+        if (id) drawCell(x, y, flashing && flashing.has(y) ? '#ffffff' : COLORS[id]);
       }
     }
 
     if (game.piece) {
       const color = PIECES[game.piece.type].color;
       for (const [x, y] of pieceCells(game.piece)) drawCell(x, y, color);
-    }
-
-    if (game.over) {
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(0, 0, W, H);
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 28px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('GAME OVER', W / 2, H / 2);
     }
   }
 
