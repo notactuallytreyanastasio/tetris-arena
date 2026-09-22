@@ -46,7 +46,7 @@ The first column is minute one: every agent logged its goal and first
 decisions before anyone had anything to read. The stars start at minute
 five, when milestone one was done and the rules said to look. (The same
 figure with one dot per node, and the borrows drawn as arcs, is
-[fig-lanes.svg](fig-lanes.svg).)
+[fig-lanes.svg](https://notactuallytreyanastasio.github.io/tetris-arena/fig-lanes.svg).)
 
 ## The tool underneath
 
@@ -325,13 +325,13 @@ agents, told to look, looked, and told to say where things came from, said.
 
 ## Reproduce it
 
-    git clone <this repository>
+    git clone https://github.com/notactuallytreyanastasio/tetris-arena
     cd tetris-arena
     deciduous remote login          # token for a deciduous server
     ./launch.sh                     # ten agents, ten panes
 
 The graph as exported at the snapshot is in
-[data/arena-graph.json](data/arena-graph.json); the per-minute timeline the
-figures are drawn from is [data/timeline.json](data/timeline.json). The ten
+[data/arena-graph.json](https://notactuallytreyanastasio.github.io/tetris-arena/data/arena-graph.json); the per-minute timeline the
+figures are drawn from is [data/timeline.json](https://notactuallytreyanastasio.github.io/tetris-arena/data/timeline.json). The ten
 games are on branches `agent-1` through `agent-10`, and merged into `main`
 under `games/agent-N/`, each with the README its agent wrote.
