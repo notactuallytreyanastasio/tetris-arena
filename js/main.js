@@ -5,6 +5,8 @@
   const renderer = makeRenderer(document.getElementById('board'));
   const $ = id => document.getElementById(id);
   const overlay = $('overlay');
+  const nextView = makePreview($('next'), QUEUE_DEPTH);
+  const holdView = makePreview($('hold'), 1);
 
   attachInput(game);
 
@@ -37,6 +39,8 @@
     last = now;
     game.tick(dt);
     renderer.draw(game);
+    nextView.draw(game.queue.slice(0, QUEUE_DEPTH));
+    holdView.draw([game.hold], game.holdUsed);
     syncHud();
     requestAnimationFrame(frame);
   }

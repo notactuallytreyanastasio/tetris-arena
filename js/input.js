@@ -10,6 +10,9 @@ const KEYS = {
   KeyZ:       g => g.rotate(-1),
   ControlLeft: g => g.rotate(-1),
   Space:      g => g.hardDrop(),
+  KeyC:       g => g.swapHold(),
+  ShiftLeft:  g => g.swapHold(),
+  ShiftRight: g => g.swapHold(),
   KeyR:       g => g.reset(),
 };
 
