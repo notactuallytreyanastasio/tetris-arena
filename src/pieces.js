@@ -14,71 +14,32 @@
 
   const TYPES = ['I', 'J', 'L', 'O', 'S', 'T', 'Z'];
 
-  const PIECES = {
-    I: {
-      id: 1, color: '#22d3ee', size: 4,
-      states: [
-        [[0, 1], [1, 1], [2, 1], [3, 1]],
-        [[2, 0], [2, 1], [2, 2], [2, 3]],
-        [[0, 2], [1, 2], [2, 2], [3, 2]],
-        [[1, 0], [1, 1], [1, 2], [1, 3]],
-      ],
-    },
-    J: {
-      id: 2, color: '#3b82f6', size: 3,
-      states: [
-        [[0, 0], [0, 1], [1, 1], [2, 1]],
-        [[1, 0], [2, 0], [1, 1], [1, 2]],
-        [[0, 1], [1, 1], [2, 1], [2, 2]],
-        [[1, 0], [1, 1], [0, 2], [1, 2]],
-      ],
-    },
-    L: {
-      id: 3, color: '#f97316', size: 3,
-      states: [
-        [[2, 0], [0, 1], [1, 1], [2, 1]],
-        [[1, 0], [1, 1], [1, 2], [2, 2]],
-        [[0, 1], [1, 1], [2, 1], [0, 2]],
-        [[0, 0], [1, 0], [1, 1], [1, 2]],
-      ],
-    },
-    O: {
-      id: 4, color: '#facc15', size: 3,
-      states: [
-        [[1, 0], [2, 0], [1, 1], [2, 1]],
-        [[1, 0], [2, 0], [1, 1], [2, 1]],
-        [[1, 0], [2, 0], [1, 1], [2, 1]],
-        [[1, 0], [2, 0], [1, 1], [2, 1]],
-      ],
-    },
-    S: {
-      id: 5, color: '#4ade80', size: 3,
-      states: [
-        [[1, 0], [2, 0], [0, 1], [1, 1]],
-        [[1, 0], [1, 1], [2, 1], [2, 2]],
-        [[1, 1], [2, 1], [0, 2], [1, 2]],
-        [[0, 0], [0, 1], [1, 1], [1, 2]],
-      ],
-    },
-    T: {
-      id: 6, color: '#a855f7', size: 3,
-      states: [
-        [[1, 0], [0, 1], [1, 1], [2, 1]],
-        [[1, 0], [1, 1], [2, 1], [1, 2]],
-        [[0, 1], [1, 1], [2, 1], [1, 2]],
-        [[1, 0], [0, 1], [1, 1], [1, 2]],
-      ],
-    },
-    Z: {
-      id: 7, color: '#f43f5e', size: 3,
-      states: [
-        [[0, 0], [1, 0], [1, 1], [2, 1]],
-        [[2, 0], [1, 1], [2, 1], [1, 2]],
-        [[0, 1], [1, 1], [1, 2], [2, 2]],
-        [[1, 0], [0, 1], [1, 1], [0, 2]],
-      ],
-    },
+  // Spawn orientation of each piece inside its SRS bounding box; the other
+  // three states are derived below by rotating inside that box. Taken from
+  // agent-1: it is seven lines of data instead of twenty-eight, and a Node
+  // check showed it reproduces the hand-typed SRS tables exactly.
+  const SPAWN = {
+    I: { id: 1, color: '#22d3ee', size: 4, cells: [[0, 1], [1, 1], [2, 1], [3, 1]] },
+    J: { id: 2, color: '#3b82f6', size: 3, cells: [[0, 0], [0, 1], [1, 1], [2, 1]] },
+    L: { id: 3, color: '#f97316', size: 3, cells: [[2, 0], [0, 1], [1, 1], [2, 1]] },
+    O: { id: 4, color: '#facc15', size: 3, cells: [[1, 0], [2, 0], [1, 1], [2, 1]] },
+    S: { id: 5, color: '#4ade80', size: 3, cells: [[1, 0], [2, 0], [0, 1], [1, 1]] },
+    T: { id: 6, color: '#a855f7', size: 3, cells: [[1, 0], [0, 1], [1, 1], [2, 1]] },
+    Z: { id: 7, color: '#f43f5e', size: 3, cells: [[0, 0], [1, 0], [1, 1], [2, 1]] },
   };
+
+  // Rotating a cell clockwise inside an n x n box: (x, y) -> (n-1-y, x).
+  // That is exactly how SRS defines the states, so the kick tables line up.
+  // O never moves: every state is its spawn shape.
+  const PIECES = {};
+  for (const t of TYPES) {
+    const { id, color, size, cells } = SPAWN[t];
+    const states = [cells];
+    for (let r = 1; r < 4; r++) {
+      states.push(t === 'O' ? cells : states[r - 1].map(([x, y]) => [size - 1 - y, x]));
+    }
+    PIECES[t] = { id, color, size, states };
+  }
 
   // id -> color, for painting locked cells straight from the board array.
   const COLORS = [null];

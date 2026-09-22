@@ -1,5 +1,8 @@
 // The playfield: a flat Uint8Array, COLS wide, ROWS visible rows plus HIDDEN
-// buffer rows above them where pieces spawn. index = y * COLS + x, y grows
+// buffer rows above them where pieces spawn. Four hidden rows, not two
+// (taken from agent-3): some SRS kicks lift a piece two rows, and with only
+// two rows of headroom a legal rotation at the ceiling would be refused by
+// the bounds check. index = y * COLS + x, y grows
 // down, row 0 is the top hidden row. Cell value 0 is empty; 1..7 is the id of
 // the tetromino that locked there (which is also its color, see Pieces.COLORS).
 //
@@ -10,7 +13,7 @@
 
   const COLS = 10;
   const ROWS = 20;
-  const HIDDEN = 2;
+  const HIDDEN = 4;
   const TOTAL = ROWS + HIDDEN;
 
   class Board {

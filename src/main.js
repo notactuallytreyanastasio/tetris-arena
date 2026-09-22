@@ -6,11 +6,14 @@
 
   const game = new window.GameModule.Game();
   const renderer = new window.Renderer(document.getElementById('board'));
+  const input = new window.Input.Input(game, {});
+  input.attach(window);
 
   let last = performance.now();
   function frame(now) {
     const dt = Math.min(now - last, 100);
     last = now;
+    input.update(dt);
     game.update(dt);
     renderer.drawBoard(game);
     requestAnimationFrame(frame);
