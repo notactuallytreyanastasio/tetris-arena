@@ -55,6 +55,7 @@ html, body {
   color: var(--accent);
 }
 .stats p:last-child { margin-bottom: 0; }
+.stats p.dim { color: var(--muted); font-size: 16px; }
 
 .keys dl {
   margin: 0;

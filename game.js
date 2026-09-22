@@ -173,6 +173,11 @@
   const MINI_SCORE = [100, 200, 400];
   const PREVIEW = 5;
   const CLEAR_FLASH = 120; // ms full rows stay on screen before collapsing
+  const COMBO_SCORE = 50;  // x combo x level
+  const PERFECT_SCORE = [0, 800, 1200, 1800, 2000];
+  const TOAST_MS = 900;
+  const CLEAR_NAMES = ['', 'SINGLE', 'DOUBLE', 'TRIPLE', 'TETRIS'];
+  const HISCORE_KEY = 'tetris-agent-10-hiscore';
 
   const state = {
     piece: null,        // { id, rot, x, y, lowest, resets, spun, kick }
@@ -180,7 +185,11 @@
     queue: [],          // upcoming piece ids, front first
     hold: 0,            // held piece id, 0 = none
     holdUsed: false,    // one hold per piece
-    clearing: null,     // { rows, acc } while full rows flash; no piece exists
+    clearing: null,     // { rows, acc, n } while full rows flash; no piece exists
+    paused: false,
+    combo: -1,          // consecutive clearing locks; -1 = none
+    toasts: [],         // [{ text, ms }] scoring feedback drawn on the board
+    hiscore: 0,
     gravityMs: 1000,
     gravityAcc: 0,
     lockAcc: 0,
@@ -188,7 +197,7 @@
     score: 0,
     lines: 0,
     level: 1,
-    b2b: false,         // last clear was a tetris
+    b2b: false,         // last clear was a tetris or T-spin
     // input
     hDir: 0,            // -1, 0, 1: direction currently auto-repeating
     dasAcc: 0,
@@ -227,6 +236,8 @@
   function reset() {
     board.fill(0);
     state.bag = []; state.queue = []; state.hold = 0; state.holdUsed = false; state.clearing = null;
+    state.paused = false; state.combo = -1; state.toasts = [];
+    state.hiscore = loadHiscore();
     state.score = 0; state.lines = 0; state.level = 1; state.b2b = false;
     state.gravityMs = gravityMs(1);
     state.gravityAcc = 0; state.lockAcc = 0;
@@ -237,7 +248,26 @@
     updateHud();
   }
 
-  function addScore(n) { state.score += n; }
+  function addScore(n) {
+    state.score += n;
+    if (state.score > state.hiscore) { state.hiscore = state.score; saveHiscore(state.hiscore); }
+  }
+
+  function loadHiscore() {
+    try { return Number(localStorage.getItem(HISCORE_KEY)) || 0; } catch (e) { return 0; }
+  }
+  function saveHiscore(n) {
+    try { localStorage.setItem(HISCORE_KEY, String(n)); } catch (e) { /* private mode */ }
+  }
+
+  function toast(text) { state.toasts.push({ text, ms: TOAST_MS }); }
+
+  function setPaused(on) {
+    if (state.over || state.paused === on) return;
+    state.paused = on;
+    if (on) { held.clear(); state.hDir = 0; state.soft = false; showOverlay('Paused', 'P to resume'); }
+    else hideOverlay();
+  }
 
   function grounded(p) {
     return collides(p.id, p.rot, p.x, p.y + 1);
@@ -291,19 +321,25 @@
   }
 
   function award(n, spin) {
-    let pts;
-    if (spin === 'full') pts = TSPIN_SCORE[n];
-    else if (spin === 'mini') pts = MINI_SCORE[Math.min(n, 2)];
-    else pts = LINE_SCORE[n];
+    let pts, label;
+    if (spin === 'full') { pts = TSPIN_SCORE[n]; label = 'T-SPIN ' + CLEAR_NAMES[n]; }
+    else if (spin === 'mini') { pts = MINI_SCORE[Math.min(n, 2)]; label = 'MINI T-SPIN ' + CLEAR_NAMES[n]; }
+    else { pts = LINE_SCORE[n]; label = CLEAR_NAMES[n]; }
     pts *= state.level;
     if (n > 0) {
       const hard = n === 4 || spin !== null;
-      if (hard && state.b2b) pts = Math.floor(pts * 1.5);
+      if (hard && state.b2b) { pts = Math.floor(pts * 1.5); label = 'B2B ' + label; }
       state.b2b = hard;
+      state.combo += 1;
+      if (state.combo > 0) pts += COMBO_SCORE * state.combo * state.level;
       state.lines += n;
       const level = 1 + Math.floor(state.lines / 10);
       if (level !== state.level) { state.level = level; state.gravityMs = gravityMs(level); }
+    } else {
+      state.combo = -1;
     }
+    if (pts > 0) toast(`${label.trim()} +${pts}`);
+    if (n > 0 && state.combo > 0) toast(`COMBO x${state.combo}`);
     addScore(pts);
   }
 
@@ -316,7 +352,7 @@
     award(rows.length, spin);
     if (rows.length) {
       state.piece = null;
-      state.clearing = { rows, acc: 0 };
+      state.clearing = { rows, acc: 0, n: rows.length };
     } else {
       state.piece = spawn();
     }
@@ -324,8 +360,14 @@
   }
 
   function finishClear() {
+    const n = state.clearing.n;
     removeRows(state.clearing.rows);
     state.clearing = null;
+    if (board.every((v) => v === 0)) {
+      const bonus = PERFECT_SCORE[n] * state.level;
+      addScore(bonus);
+      toast(`PERFECT CLEAR +${bonus}`);
+    }
     state.piece = spawn();
   }
 
@@ -357,24 +399,28 @@
   }
 
   function update(dt) {
-    if (state.over) return;
+    for (const t of state.toasts) t.ms -= dt;
+    if (state.toasts.length && state.toasts[0].ms <= 0) state.toasts = state.toasts.filter((t) => t.ms > 0);
+    if (state.over || state.paused) return;
+
+    // horizontal auto-repeat: first move on press, then DAS, then ARR.
+    // The accumulator runs even while rows flash, so a direction held
+    // through a clear is charged when the next piece appears.
+    if (state.hDir) {
+      state.dasAcc += dt;
+      if (!state.dasCharged && state.dasAcc >= DAS) { state.dasCharged = true; state.dasAcc -= DAS; tryMove(state.hDir, 0); }
+      if (state.dasCharged && state.piece) {
+        while (state.dasAcc >= ARR) { state.dasAcc -= ARR; if (!tryMove(state.hDir, 0)) { state.dasAcc = 0; break; } }
+      }
+      if (!state.piece && state.dasCharged) state.dasAcc = Math.min(state.dasAcc, ARR); // stay charged, do not bank repeats
+    }
+
     if (state.clearing) {
       state.clearing.acc += dt;
       if (state.clearing.acc >= CLEAR_FLASH) finishClear();
       return;
     }
     if (!state.piece) return;
-
-    // horizontal auto-repeat: first move on press, then DAS, then ARR
-    if (state.hDir) {
-      state.dasAcc += dt;
-      if (!state.dasCharged) {
-        if (state.dasAcc >= DAS) { state.dasCharged = true; state.dasAcc -= DAS; tryMove(state.hDir, 0); }
-      }
-      if (state.dasCharged) {
-        while (state.dasAcc >= ARR) { state.dasAcc -= ARR; if (!tryMove(state.hDir, 0)) { state.dasAcc = 0; break; } }
-      }
-    }
 
     // gravity
     const interval = state.soft ? state.gravityMs / SOFT_DROP : state.gravityMs;
@@ -408,7 +454,8 @@
   function onKeyDown(e) {
     if (e.repeat) return; // we do our own repeat
     if (e.code === 'KeyR') { reset(); e.preventDefault(); return; }
-    if (state.over) return;
+    if (e.code === 'KeyP' || e.code === 'Escape') { setPaused(!state.paused); e.preventDefault(); return; }
+    if (state.over || state.paused) return;
     switch (e.code) {
       case 'ArrowLeft':  held.add(e.code); press(-1); break;
       case 'ArrowRight': held.add(e.code); press(1); break;
@@ -440,7 +487,8 @@
 
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
-  window.addEventListener('blur', () => { held.clear(); state.hDir = 0; state.soft = false; });
+  window.addEventListener('blur', () => { held.clear(); state.hDir = 0; state.soft = false; setPaused(true); });
+  document.addEventListener('visibilitychange', () => { if (document.hidden) setPaused(true); });
 
   // ---------------------------------------------------------------- loop
 
@@ -460,8 +508,9 @@
     score: document.getElementById('score'),
     level: document.getElementById('level'),
     lines: document.getElementById('lines'),
+    hiscore: document.getElementById('hiscore'),
   };
-  const shown = { score: -1, level: -1, lines: -1 };
+  const shown = { score: -1, level: -1, lines: -1, hiscore: -1 };
   function updateHud() {
     for (const k of Object.keys(hud)) {
       if (shown[k] !== state[k]) { shown[k] = state[k]; hud[k].textContent = String(state[k]); }
@@ -523,14 +572,13 @@
     if (gy === p.y) return;
     const cells = PIECES[p.id].cells[p.rot];
     ctx.strokeStyle = PIECES[p.id].color;
-    ctx.globalAlpha = 0.35;
+    ctx.globalAlpha *= 0.35;
     ctx.lineWidth = 2;
     for (let i = 0; i < 4; i++) {
       const vy = gy + cells[i][1] - HIDDEN;
       if (vy < 0) continue;
       ctx.strokeRect((p.x + cells[i][0]) * CELL + 1.5, vy * CELL + 1.5, CELL - 3, CELL - 3);
     }
-    ctx.globalAlpha = 1;
   }
 
   // Draw a piece in its spawn orientation centred in a w x h box on c.
@@ -583,12 +631,42 @@
 
     const p = state.piece;
     if (p) {
+      // lock pulse: the closer to locking, the brighter the piece and the
+      // fainter the ghost
+      const pulse = grounded(p) ? Math.min(1, state.lockAcc / LOCK_DELAY) : 0;
+      ctx.globalAlpha = 1 - pulse;
       drawGhost(p, dropY(p));
+      ctx.globalAlpha = 1;
       const cells = PIECES[p.id].cells[p.rot];
       for (let i = 0; i < 4; i++) drawCell(p.x + cells[i][0], p.y + cells[i][1], PIECES[p.id].color);
+      if (pulse > 0) {
+        ctx.fillStyle = `rgba(255,255,255,${(0.45 * pulse).toFixed(3)})`;
+        for (let i = 0; i < 4; i++) {
+          const vy = p.y + cells[i][1] - HIDDEN;
+          if (vy >= 0) ctx.fillRect((p.x + cells[i][0]) * CELL, vy * CELL, CELL, CELL);
+        }
+      }
     }
 
+    drawToasts();
     drawPanels();
+  }
+
+  function drawToasts() {
+    if (!state.toasts.length) return;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 18px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+    state.toasts.forEach((t, i) => {
+      const life = Math.max(0, t.ms / TOAST_MS); // 1 -> 0
+      const y = VISIBLE * CELL * 0.35 + i * 26 - (1 - life) * 20;
+      ctx.globalAlpha = Math.min(1, life * 2);
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillText(t.text, COLS * CELL / 2 + 1, y + 1);
+      ctx.fillStyle = '#ffffff';
+      ctx.fillText(t.text, COLS * CELL / 2, y);
+    });
+    ctx.globalAlpha = 1;
   }
 
   // ---------------------------------------------------------------- go
@@ -597,5 +675,5 @@
   requestAnimationFrame((t) => { last = t; frame(t); });
 
   // Debug handle for headless harnesses and the devtools console.
-  window.__tetris = { PIECES, KICKS, board, state, collides, lock, clearLines, fullRows, removeRows, gravityMs, spawn, reset, stepGravity, tryMove, tryRotate, hardDrop, holdPiece, tspinKind, dropY, finishClear, update, frame, COLS, ROWS, HIDDEN, CLEAR_FLASH };
+  window.__tetris = { PIECES, KICKS, board, state, collides, lock, clearLines, fullRows, removeRows, gravityMs, spawn, reset, stepGravity, tryMove, tryRotate, hardDrop, holdPiece, tspinKind, dropY, finishClear, setPaused, update, frame, COLS, ROWS, HIDDEN, CLEAR_FLASH, DAS, ARR, TOAST_MS };
 })();
