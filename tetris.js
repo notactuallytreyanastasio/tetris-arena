@@ -148,20 +148,57 @@ const LOCK_DELAY = 500;
 const LOCK_RESETS = 15;      // guideline move-reset cap
 const SOFT_DROP_FACTOR = 20; // soft drop is 20x gravity
 
+const CLEAR_FLASH = 120;     // ms the full rows flash before they vanish
+const LINES_PER_LEVEL = 10;
+
+// Guideline scoring, indexed by lines cleared. Multiplied by level.
+const SCORE = {
+  normal: [0, 100, 300, 500, 800],
+  tspin:  [400, 800, 1200, 1600],
+  mini:   [100, 200, 400],
+};
+
+// Guideline gravity curve, ms per row. Level 1 = 1000ms, level 10 ~ 63ms.
+function gravityFor(level) {
+  const l = Math.min(level, 20) - 1;
+  return Math.pow(0.8 - l * 0.007, l) * 1000;
+}
+
 const state = {
-  piece: null,       // { id, r, x, y, lowestY, resets }
-  gravityMs: 800,    // ms per row at level 1
+  piece: null,       // { id, r, x, y, lowestY, resets, spun, kick }
   fallAcc: 0,        // ms accumulated toward the next gravity step
   lockAcc: 0,        // ms the piece has been resting on something
+  clearing: null,    // { rows: [y...], t } while full rows flash
+  score: 0,
+  lines: 0,
+  level: 1,
+  b2b: false,        // last line clear was a tetris or T-spin
   over: false,
 };
+
+function gravityMs() { return gravityFor(state.level); }
+
+function reset() {
+  board.fill(0);
+  bag = [];
+  state.piece = null;
+  state.fallAcc = 0;
+  state.lockAcc = 0;
+  state.clearing = null;
+  state.score = 0;
+  state.lines = 0;
+  state.level = 1;
+  state.b2b = false;
+  state.over = false;
+  spawn();
+}
 
 // Held keys. dir is -1/0/+1 for the direction currently auto-shifting.
 const input = { dir: 0, dasAcc: 0, dasCharged: false, soft: false };
 
 function spawn() {
   const id = nextFromBag();
-  const p = { id, r: 0, x: SPAWN_X[id], y: 0, lowestY: 0, resets: 0 };
+  const p = { id, r: 0, x: SPAWN_X[id], y: 0, lowestY: 0, resets: 0, spun: false, kick: 0 };
   if (!fits(id, 0, p.x, p.y)) { state.over = true; return; }
   // Guideline: drop one row immediately if the way is clear, so the piece
   // is visible right away rather than hanging in the hidden rows.
@@ -188,6 +225,7 @@ function tryMove(dx) {
   const p = state.piece;
   if (!p || !fits(p.id, p.r, p.x + dx, p.y)) return false;
   p.x += dx;
+  p.spun = false;
   afterMove(p);
   return true;
 }
@@ -197,10 +235,14 @@ function tryRotate(dr) {
   if (!p || p.id === O) return false;
   const to = (p.r + dr + 4) % 4;
   const table = p.id === I ? KICKS_I : KICKS_JLSTZ;
-  for (const [kx, ky] of table[p.r + '>' + to]) {
+  const kicks = table[p.r + '>' + to];
+  for (let i = 0; i < kicks.length; i++) {
+    const [kx, ky] = kicks[i];
     const nx = p.x + kx, ny = p.y - ky; // table is +y up, board is +y down
     if (fits(p.id, to, nx, ny)) {
       p.r = to; p.x = nx; p.y = ny;
+      p.spun = true;   // last successful action was a rotation
+      p.kick = i;
       afterMove(p);
       return true;
     }
@@ -208,9 +250,75 @@ function tryRotate(dr) {
   return false;
 }
 
+// 3-corner rule: a T whose last action was a rotation, with at least 3 of the
+// 4 diagonals around its centre solid, was spun in. 'full' if both corners on
+// the pointing side are solid, or the piece got there via kick test 5; else
+// 'mini'. Returns null, 'mini' or 'full'.
+function tspinKind(p) {
+  if (p.id !== T || !p.spun) return null;
+  const solid = (x, y) => x < 0 || x >= W || y >= H || (y >= 0 && board[y * W + x] !== 0);
+  const cx = p.x + 1, cy = p.y + 1;
+  const tl = solid(cx - 1, cy - 1), tr = solid(cx + 1, cy - 1);
+  const bl = solid(cx - 1, cy + 1), br = solid(cx + 1, cy + 1);
+  if (tl + tr + bl + br < 3) return null;
+  const front = [[tl, tr], [tr, br], [bl, br], [tl, bl]][p.r]; // corners the T points at
+  return (front[0] && front[1]) || p.kick === 4 ? 'full' : 'mini';
+}
+
+function fullRows() {
+  const rows = [];
+  for (let y = 0; y < H; y++) {
+    let full = true;
+    for (let x = 0; x < W; x++) if (!board[y * W + x]) { full = false; break; }
+    if (full) rows.push(y);
+  }
+  return rows;
+}
+
+// Remove the given rows (ascending) by sliding everything above them down.
+// copyWithin on the flat array: no allocation, and rows above the gap keep
+// their order.
+function removeRows(rows) {
+  for (const y of rows) {
+    board.copyWithin(W, 0, y * W);
+    board.fill(0, 0, W);
+  }
+}
+
+function award(n, spin) {
+  let pts;
+  if (spin === 'full') pts = SCORE.tspin[n];
+  else if (spin === 'mini') pts = SCORE.mini[Math.min(n, 2)];
+  else pts = SCORE.normal[n];
+  pts *= state.level;
+  if (n > 0) {
+    const hard = n === 4 || spin !== null;
+    if (hard && state.b2b) pts = Math.floor(pts * 1.5);
+    state.b2b = hard;
+    state.lines += n;
+    state.level = 1 + Math.floor(state.lines / LINES_PER_LEVEL);
+  }
+  state.score += pts;
+}
+
 function lockNow() {
-  lockPiece(state.piece);
-  spawn();
+  const p = state.piece;
+  const spin = tspinKind(p);
+  lockPiece(p);
+  state.piece = null;
+
+  // Lock-out: the whole piece came to rest above the visible field.
+  let visible = false;
+  for (const [, cy] of SHAPES[p.id][p.r]) if (p.y + cy >= HIDDEN) visible = true;
+  if (!visible) { state.over = true; return; }
+
+  const rows = fullRows();
+  award(rows.length, spin);
+  if (rows.length) {
+    state.clearing = { rows, t: 0 };   // spawn happens after the flash
+  } else {
+    spawn();
+  }
 }
 
 // One row of gravity or soft drop. Returns true if the piece moved.
@@ -218,6 +326,7 @@ function stepDown() {
   const p = state.piece;
   if (!fits(p.id, p.r, p.x, p.y + 1)) return false;
   p.y += 1;
+  p.spun = false;   // falling after the rotation means it was not spun in
   if (p.y > p.lowestY) { p.lowestY = p.y; p.resets = 0; }
   state.lockAcc = 0;
   return true;
@@ -226,12 +335,22 @@ function stepDown() {
 function hardDrop() {
   const p = state.piece;
   if (!p) return;
-  while (stepDown()) {}
+  while (stepDown()) state.score += 2;
   lockNow();
 }
 
 function update(dt) {
   if (state.over) return;
+
+  if (state.clearing) {
+    state.clearing.t += dt;
+    if (state.clearing.t >= CLEAR_FLASH) {
+      removeRows(state.clearing.rows);
+      state.clearing = null;
+      spawn();
+    }
+    return;
+  }
 
   // Delayed auto shift
   if (input.dir !== 0) {
@@ -256,11 +375,12 @@ function update(dt) {
     state.lockAcc += dt;
     if (state.lockAcc >= LOCK_DELAY) lockNow();
   } else {
-    const rowMs = input.soft ? state.gravityMs / SOFT_DROP_FACTOR : state.gravityMs;
+    const rowMs = input.soft ? gravityMs() / SOFT_DROP_FACTOR : gravityMs();
     state.fallAcc += dt;
     while (state.fallAcc >= rowMs) {
       state.fallAcc -= rowMs;
       if (!stepDown()) break;
+      if (input.soft) state.score += 1;
     }
   }
 }
@@ -283,6 +403,8 @@ function releaseDir(d) {
 
 document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
+  if (e.code === 'KeyR') { reset(); e.preventDefault(); return; }
+  if (state.over) return;
   switch (e.code) {
     case 'ArrowLeft':  pressDir(-1); break;
     case 'ArrowRight': pressDir(+1); break;
@@ -351,12 +473,15 @@ function draw() {
     ctx.beginPath(); ctx.moveTo(0, y * CELL + .5); ctx.lineTo(W * CELL, y * CELL + .5); ctx.stroke();
   }
 
-  // settled cells
-  for (let y = HIDDEN; y < H; y++)
+  // settled cells; rows being cleared flash white
+  const flashing = state.clearing ? state.clearing.rows : null;
+  for (let y = HIDDEN; y < H; y++) {
+    const flash = flashing && flashing.includes(y);
     for (let x = 0; x < W; x++) {
       const v = cell(x, y);
-      if (v) drawCell(ctx, x, y - HIDDEN, COLORS[v], CELL);
+      if (v) drawCell(ctx, x, y - HIDDEN, flash ? '#ffffff' : COLORS[v], CELL);
     }
+  }
 
   // active piece
   const p = state.piece;
@@ -364,6 +489,40 @@ function draw() {
     for (const [cx, cy] of SHAPES[p.id][p.r]) {
       const y = p.y + cy - HIDDEN;
       if (y >= 0) drawCell(ctx, p.x + cx, y, COLORS[p.id], CELL);
+    }
+  }
+}
+
+// HUD. Writing textContent every frame forces layout for nothing, so each
+// field remembers what it last showed and only writes on change. (Pattern
+// from agent-3.)
+const hud = {
+  score: document.getElementById('score'),
+  level: document.getElementById('level'),
+  lines: document.getElementById('lines'),
+  overlay: document.getElementById('overlay'),
+  overlayTitle: document.getElementById('overlay-title'),
+  overlaySub: document.getElementById('overlay-sub'),
+};
+const shown = { score: -1, level: -1, lines: -1, overlay: '' };
+
+function setText(key, value) {
+  if (shown[key] === value) return;
+  shown[key] = value;
+  hud[key].textContent = value;
+}
+
+function drawHud() {
+  setText('score', state.score);
+  setText('level', state.level);
+  setText('lines', state.lines);
+  const mode = state.over ? 'over' : '';
+  if (shown.overlay !== mode) {
+    shown.overlay = mode;
+    hud.overlay.classList.toggle('hidden', mode === '');
+    if (mode === 'over') {
+      hud.overlayTitle.textContent = 'Game over';
+      hud.overlaySub.textContent = 'press R to restart';
     }
   }
 }
@@ -378,8 +537,9 @@ function frame(now) {
   last = now;
   update(dt);
   draw();
+  drawHud();
   requestAnimationFrame(frame);
 }
 
-spawn();
+reset();
 requestAnimationFrame((t) => { last = t; requestAnimationFrame(frame); });
