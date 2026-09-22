@@ -68,9 +68,10 @@ Best score is kept in `localStorage`.
 - Soft drop is gravity divided by 20, so it gets faster with level rather
   than being a fixed rate.
 - No sound, no touch controls.
-- Not verified in a browser by me. Every behaviour above was checked in a
-  headless Node harness that stubs the DOM and drives frames at 16ms
-  (about 100 checks across four suites, kept outside the repo).
+- Only seen in a browser as a headless Chrome screenshot (board, ghost,
+  queue, HUD all render). Every behaviour above was checked in a headless
+  Node harness that stubs the DOM and drives frames at 16ms: 101 checks
+  across four suites, kept outside the repo.
 
 ## Taken from whom
 

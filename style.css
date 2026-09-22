@@ -30,7 +30,7 @@ html, body {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  width: 150px;
+  width: 170px;
 }
 
 .box {
