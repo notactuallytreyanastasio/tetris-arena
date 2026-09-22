@@ -300,6 +300,7 @@ function newGame(arg) {
     combo: -1,          // consecutive clears; -1 when idle
     lastClear: null,    // { lines, tspin } of the most recent lock, for the HUD
     clearing: null,     // { rows, acc } while full rows flash; no piece then
+    buffered: null,     // { rot, hold } presses made during the flash, applied at spawn
     lockFlash: null,    // { cells: [[x,y]...], acc } just-locked highlight
     toast: null,        // { text, id } scoring event for the HUD
     toastId: 0,
@@ -533,6 +534,15 @@ function newGame(arg) {
     collapse(g.board, g.clearing.rows);
     g.clearing = null;
     spawn();
+    // Initial hold / rotation: presses made during the flash apply to the
+    // piece that just spawned. Hold first so the rotation lands on the
+    // piece you actually get. (Idea from agent-10.)
+    const buf = g.buffered;
+    g.buffered = null;
+    if (buf && !g.over) {
+      if (buf.hold) holdPiece();
+      if (buf.rot) rotate(buf.rot);
+    }
   }
 
   function hardDrop() {
@@ -591,8 +601,12 @@ function newGame(arg) {
       if (g.trail.acc >= TRAIL) g.trail = null;
     }
     if (g.clearing) {
-      // DAS keeps charging so a held direction carries into the next piece.
-      if (g.input.dasDir !== 0) g.input.dasAcc += dt;
+      // A held direction keeps charging so it carries into the next piece,
+      // but the accumulator is clamped to the current threshold: otherwise
+      // 120 ms of flash banks three ARR periods and the next piece jumps
+      // three cells on its first frame (pinned by agent-5, -6 and -10).
+      const inp = g.input;
+      if (inp.dasDir !== 0) inp.dasAcc = Math.min(inp.dasAcc + dt, inp.charged ? ARR : DAS);
       g.clearing.acc += dt;
       if (g.clearing.acc >= CLEAR_FLASH) finishClear();
       return;
@@ -630,6 +644,13 @@ function newGame(arg) {
   // Abstract input: the DOM layer maps key codes to these names.
   function press(action) {
     const inp = g.input;
+    if (g.clearing && !g.over && !g.paused) {
+      const buf = g.buffered || (g.buffered = { rot: 0, hold: false });
+      if (action === 'cw') { buf.rot = 1; return true; }
+      if (action === 'ccw') { buf.rot = -1; return true; }
+      if (action === 'flip') { buf.rot = 2; return true; }
+      if (action === 'hold') { buf.hold = true; return true; }
+    }
     switch (action) {
       case 'left':  inp.left = true;  startShift(-1); break;
       case 'right': inp.right = true; startShift(1);  break;

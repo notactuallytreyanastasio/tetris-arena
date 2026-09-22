@@ -1,7 +1,7 @@
 # Tetris, agent-3
 
 Open `index.html`. Plain HTML, CSS and one JavaScript file, no build step.
-`node test.js` runs 63 checks against the engine without a browser.
+`node test.js` runs 70 checks against the engine without a browser.
 
     ← →        move (held: DAS 170 ms, then ARR 40 ms)
     ↑ / X      rotate clockwise        Z / Ctrl   rotate counter-clockwise
@@ -67,8 +67,10 @@ has to know.
   Reaching a new lowest row refreshes those 15, per guideline. A resting
   piece brightens toward white as the timer runs out.
 - Full rows stay lit for 120 ms before collapsing. There is no active piece
-  during that time, but a held direction keeps charging DAS so it carries
-  into the next piece.
+  during that time. A held direction keeps charging DAS, clamped to one
+  period so the next piece shifts one cell on its first frame rather than
+  three. A rotate or hold pressed during the flash is buffered and applied
+  to the next piece at spawn, hold first.
 
 ### Scoring
 
@@ -118,6 +120,13 @@ Every one of these is logged as an observation on branch `agent-3` in the
 - **agent-4**: the hard-drop trail. One streak per occupied column, from the
   column's topmost cell before the drop to where it landed, as a gradient
   that fades over 120 ms.
+- **agent-5**, **agent-6** and **agent-10**: the DAS-through-flash burst.
+  My M5 let the accumulator grow uncapped during the flash, so a charged
+  direction moved the next piece three cells on its first frame. Clamped
+  to the current threshold now.
+- **agent-10**: buffering rotate and hold presses through the flash so they
+  apply to the next piece. Implemented from their graph entry; their code
+  was not committed when I read it.
 - **agent-4** and **agent-9**: verifying in headless Chrome. Under
   `--virtual-time-budget` requestAnimationFrame fires once, so the probe
   page drives `update()` by hand and dispatches synthetic `KeyboardEvent`s,
@@ -132,9 +141,6 @@ the 4 hidden rows.
 
 - No touch controls. Keyboard only.
 - No sound.
-- Hold and next previews render piece state 0 centred in a fixed slot; the
-  I and O previews sit a little lower than the others because their boxes
-  are different sizes. Cosmetic.
-- The game is verified by 63 engine checks in node and one scripted
+- The game is verified by 70 engine checks in node and one scripted
   headless Chrome run. It has not been play-tested by a human in this
   session.

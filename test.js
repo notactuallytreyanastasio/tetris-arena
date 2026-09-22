@@ -288,5 +288,46 @@ function lcg(seed) { let s = seed; return () => (s = (s * 1664525 + 1013904223) 
   check('a hard drop that moves zero rows leaves no trail', g.state.trail, null);
 }
 
+// --- Round 4: DAS clamp through the flash, buffered rotate/hold -----------
+{
+  // hold right in ARR, hard drop into a clear, wait out the flash: the first
+  // frame after spawn shifts exactly one cell, not three
+  const g = newGame(lcg(13));
+  const b = g.state.board;
+  fillRows(b, TOTAL - 1, TOTAL, 9);
+  g.state.cur = { name: 'I', rot: 1, x: 7, y: BUFFER - 1, lowestY: BUFFER - 1, kick: 0 }; // column 9
+  g.press('right');                           // immediate shift refused at the wall, DAS starts
+  for (let i = 0; i < 20; i++) g.update(16);  // 320 ms: charged, in ARR
+  check('direction is charged before the drop', g.state.input.charged, true);
+  g.hardDrop();
+  check('drop cleared a line and entered the flash', [g.state.clearing !== null, g.state.cur], [true, null]);
+  for (let i = 0; i < 7; i++) g.update(16);   // 112 ms, still flashing
+  check('accumulator is clamped to ARR during the flash', g.state.input.dasAcc <= ARR, true);
+  g.update(16);                               // flash ends at 128 ms, piece spawns
+  const x0 = g.state.cur.x;
+  g.update(16);
+  check('first frame after the flash shifts exactly one cell', g.state.cur.x - x0, 1);
+  g.release('right');
+
+  // buffered rotation: press cw during the flash, next piece spawns rotated
+  const h = newGame(lcg(14));
+  fillRows(h.state.board, TOTAL - 1, TOTAL, 9);
+  h.state.cur = { name: 'I', rot: 1, x: 7, y: BUFFER - 1, lowestY: BUFFER - 1, kick: 0 };
+  h.hardDrop();
+  check('cw press during the flash is buffered', [h.press('cw'), h.state.buffered], [true, { rot: 1, hold: false }]);
+  h.finishClear();
+  check('next piece spawns already rotated', [h.state.cur.rot, h.state.buffered], [1, null]);
+
+  // buffered hold: press hold during the flash, next piece goes to hold
+  const k = newGame(lcg(15));
+  fillRows(k.state.board, TOTAL - 1, TOTAL, 9);
+  k.state.cur = { name: 'I', rot: 1, x: 7, y: BUFFER - 1, lowestY: BUFFER - 1, kick: 0 };
+  k.hardDrop();
+  const upcoming = k.state.queue[0], after = k.state.queue[1];
+  k.press('hold'); k.press('ccw');
+  k.finishClear();
+  check('hold applies first, then rotation lands on the piece you get', [k.state.hold, k.state.cur.name, k.state.cur.rot === (after === 'O' ? 0 : 3)], [upcoming, after, true]);
+}
+
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) FAILED`);
 process.exit(failures ? 1 : 0);
