@@ -1,0 +1,36 @@
+const { api, listeners, sandbox } = require('./harness.js');
+const { state, board, W, H, I, reset, update, hardDrop } = api;
+let fails = 0;
+const check = (name, ok, extra='') => { console.log((ok ? 'ok  ' : 'FAIL') + ' ' + name + (ok ? '' : '  ' + extra)); if (!ok) fails++; };
+const row = (y, s) => { for (let x = 0; x < W; x++) board[y*W+x] = s[x] === 'X' ? 1 : 0; };
+const setPiece = (id, r, x, y) => { state.piece = { id, r, x, y, lowestY: y, resets: 0, spun: false, kick: 0 }; state.lockAcc = 0; };
+const key = (code) => listeners.keydown({ code, repeat: false, preventDefault(){} });
+
+// pause stops gravity, resumes, blocks input
+reset(); const y0 = state.piece.y;
+key('KeyP'); update(3000); check('paused: no gravity', state.paused && state.piece.y === y0);
+const x0 = state.piece.x; key('ArrowLeft'); check('paused: input ignored', state.piece.x === x0);
+key('Escape'); check('Esc resumes', !state.paused);
+update(1100); check('gravity resumes', state.piece.y > y0);
+// pause while holding right clears DAS
+key('ArrowRight'); check('dir set', api.input.dir === 1);
+key('KeyP'); check('pause clears held dir', api.input.dir === 0);
+key('KeyP');
+// game over: P does nothing
+state.over = true; key('KeyP'); check('no pause when over', !state.paused);
+state.over = false;
+
+// combo: two consecutive clearing locks -> 50*1*level bonus on the second
+reset(); board.fill(0);
+row(H-1, 'XXXXXXXXX.'); setPiece(I, 1, 7, H-5); hardDrop(); update(200);
+const s1 = state.score;               // 100 + drop
+check('first clear no combo', state.combo === 0);
+board.fill(0); row(H-1, 'XXXXXXXXX.'); setPiece(I, 1, 7, H-5); hardDrop(); update(200);
+const drop = 2 * ((H-1) - (H-5) - 3); // I vertical spans 4 rows from y+0..y+3
+check('second clear adds 50 combo', state.combo === 1 && state.score - s1 === 100 + 50 + drop, String(state.score - s1));
+// a non-clearing lock resets combo
+board.fill(0); setPiece(I, 0, 0, 1); hardDrop(); update(200);
+check('non-clear resets combo', state.combo === -1);
+
+console.log(fails ? `${fails} FAILURES` : 'ALL OK');
+process.exit(fails ? 1 : 0);

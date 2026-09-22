@@ -178,6 +178,8 @@ const state = {
   lines: 0,
   level: 1,
   b2b: false,        // last line clear was a tetris or T-spin
+  combo: -1,         // consecutive locks that cleared lines; -1 = none
+  paused: false,
   over: false,
 };
 
@@ -197,8 +199,16 @@ function reset() {
   state.lines = 0;
   state.level = 1;
   state.b2b = false;
+  state.combo = -1;
+  state.paused = false;
   state.over = false;
   spawn();
+}
+
+function setPaused(on) {
+  if (state.over || state.paused === on) return;
+  state.paused = on;
+  if (on) { input.dir = 0; input.soft = false; }  // keyups will be missed
 }
 
 // Held keys. dir is -1/0/+1 for the direction currently auto-shifting.
@@ -310,8 +320,12 @@ function award(n, spin) {
     const hard = n === 4 || spin !== null;
     if (hard && state.b2b) pts = Math.floor(pts * 1.5);
     state.b2b = hard;
+    state.combo += 1;
+    if (state.combo > 0) pts += 50 * state.combo * state.level;   // from agent-2
     state.lines += n;
     state.level = 1 + Math.floor(state.lines / LINES_PER_LEVEL);
+  } else {
+    state.combo = -1;
   }
   state.score += pts;
 }
@@ -372,7 +386,7 @@ function ghostY(p) {
 }
 
 function update(dt) {
-  if (state.over) return;
+  if (state.over || state.paused) return;
 
   if (state.clearing) {
     state.clearing.t += dt;
@@ -436,7 +450,8 @@ function releaseDir(d) {
 document.addEventListener('keydown', (e) => {
   if (e.repeat) return;
   if (e.code === 'KeyR') { reset(); e.preventDefault(); return; }
-  if (state.over) return;
+  if (e.code === 'KeyP' || e.code === 'Escape') { setPaused(!state.paused); e.preventDefault(); return; }
+  if (state.over || state.paused) return;
   switch (e.code) {
     case 'ArrowLeft':  pressDir(-1); break;
     case 'ArrowRight': pressDir(+1); break;
@@ -458,8 +473,10 @@ document.addEventListener('keyup', (e) => {
   }
 });
 
-// If the window loses focus mid-keypress we never get the keyup.
-window.addEventListener('blur', () => { input.dir = 0; input.soft = false; });
+// Losing focus loses the keyup for any held key, and a piece should not
+// keep falling in a tab nobody is looking at: both cases pause.
+window.addEventListener('blur', () => setPaused(true));
+document.addEventListener('visibilitychange', () => { if (document.hidden) setPaused(true); });
 
 // ---------------------------------------------------------------------------
 // Rendering
@@ -603,13 +620,16 @@ function drawHud() {
   setText('score', state.score);
   setText('level', state.level);
   setText('lines', state.lines);
-  const mode = state.over ? 'over' : '';
+  const mode = state.over ? 'over' : state.paused ? 'paused' : '';
   if (shown.overlay !== mode) {
     shown.overlay = mode;
     hud.overlay.classList.toggle('hidden', mode === '');
     if (mode === 'over') {
       hud.overlayTitle.textContent = 'Game over';
       hud.overlaySub.textContent = 'press R to restart';
+    } else if (mode === 'paused') {
+      hud.overlayTitle.textContent = 'Paused';
+      hud.overlaySub.textContent = 'press P to resume';
     }
   }
 }
