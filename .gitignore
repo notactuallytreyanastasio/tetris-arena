@@ -1,0 +1,5 @@
+# worktrees live here, one per agent; they are branches, not files of main
+agents/
+.deciduous/deciduous.db*
+.deciduous/graph.json
+.deciduous/documents/

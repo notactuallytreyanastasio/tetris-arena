@@ -1,0 +1,6 @@
+# Every agent's worktree inherits this file, so all ten write to one graph.
+# The workspace is pinned by name: derived from the directory it would be
+# "agent-3", and the agents would never see each other.
+[remote]
+url = "https://bobbby.online/deciduous-mcp"
+workspace = "tetris-arena"
