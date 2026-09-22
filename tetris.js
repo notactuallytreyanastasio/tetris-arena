@@ -86,7 +86,11 @@ function gravitySeconds(level) {
   const l = Math.min(level, 20) - 1;
   return Math.pow(0.8 - l * 0.007, l);
 }
-const LOCK_DELAY = 500; // ms a piece may rest on something before it locks
+const LOCK_DELAY = 500;   // ms a piece may rest on something before it locks
+const LOCK_RESETS = 15;   // shifts/rotations that may restart that timer per piece
+const DAS = 150;          // ms a direction is held before it auto-repeats
+const ARR = 33;           // ms between auto-repeat shifts
+const SOFT_DROP = 20;     // soft drop runs gravity this many times faster
 
 // ---------------------------------------------------------------- 2. board
 
@@ -126,20 +130,49 @@ const state = {
   over: false,
   gravityAcc: 0,   // ms accumulated toward the next gravity step
   lockAcc: 0,      // ms the piece has been resting
+  lockResets: 0,   // lock-delay restarts used by the current piece
 };
+
+// Held horizontal directions, oldest first. The newest press wins; releasing
+// it falls back to whatever is still held. (Taken from agent-3's
+// "release resumes the other direction"; the stack replaces their
+// left/right/dasDir triple.)
+const input = {
+  held: [],        // e.g. [-1, 1] means left was pressed, then right
+  dasAcc: 0,       // ms toward the next auto-shift
+  charged: false,  // DAS has elapsed; now repeating every ARR
+  soft: false,     // down is held
+};
+const activeDir = () => input.held.length ? input.held[input.held.length - 1] : 0;
 
 function spawn() {
   const id = nextId();
   const n = PIECES[id].n;
-  const x = Math.floor((W - n) / 2);   // 3 for 3x3, 3 for 4x4
-  const y = HIDDEN - 1;                // bottom row of the box is the top visible row
-  if (collides(id, 0, x, y)) {
-    state.over = true;
-    return;
+  const x = Math.floor((W - n) / 2);   // 3 for both 3x3 and 4x4 boxes
+  // Bottom row of the box on the top visible row; if that is blocked try one
+  // row higher (agent-3's fallback) before topping out.
+  for (const y of [HIDDEN - 1, HIDDEN - 2]) {
+    if (!collides(id, 0, x, y)) {
+      state.cur = { id, r: 0, x, y };
+      state.gravityAcc = 0;
+      state.lockAcc = 0;
+      state.lockResets = 0;
+      return;
+    }
   }
-  state.cur = { id, r: 0, x, y };
-  state.gravityAcc = 0;
-  state.lockAcc = 0;
+  state.cur = { id, r: 0, x, y: HIDDEN - 2 };
+  state.over = true;
+}
+
+const grounded = () => { const p = state.cur; return collides(p.id, p.r, p.x, p.y + 1); };
+
+// A shift or rotation while resting restarts the lock timer, LOCK_RESETS
+// times at most, so a piece cannot be stalled forever.
+function noteMoved() {
+  if (grounded() && state.lockResets < LOCK_RESETS) {
+    state.lockAcc = 0;
+    state.lockResets++;
+  }
 }
 
 // Try to shift the current piece. Returns true if it moved.
@@ -149,6 +182,35 @@ function shift(dx, dy) {
   p.x += dx;
   p.y += dy;
   return true;
+}
+
+function move(dx) {
+  if (state.over) return;
+  if (shift(dx, 0)) noteMoved();
+}
+
+// dir: 0 clockwise, 1 counter-clockwise. Walk the SRS kick list for this
+// (from, dir) pair; the first offset that fits wins.
+function rotate(dir) {
+  if (state.over) return false;
+  const p = state.cur;
+  const to = (p.r + (dir === 0 ? 1 : 3)) % 4;
+  for (const [kx, ky] of kicksFor(p.id)[p.r][dir]) {
+    if (!collides(p.id, to, p.x + kx, p.y + ky)) {
+      p.r = to;
+      p.x += kx;
+      p.y += ky;
+      noteMoved();
+      return true;
+    }
+  }
+  return false;
+}
+
+function hardDrop() {
+  if (state.over) return;
+  while (shift(0, 1)) { /* fall */ }
+  lock();
 }
 
 function lock() {
@@ -178,11 +240,29 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
-function update(dt) {
-  const p = state.cur;
-  const resting = collides(p.id, p.r, p.x, p.y + 1);
+// Auto-shift: the first shift happens on keydown; holding waits DAS, then
+// shifts every ARR. Timers run on the frame clock, not the OS key repeat.
+function updateInput(dt) {
+  const dir = activeDir();
+  if (dir === 0) return;
+  input.dasAcc += dt;
+  const threshold = input.charged ? ARR : DAS;
+  while (input.dasAcc >= threshold) {
+    input.dasAcc -= threshold;
+    input.charged = true;
+    move(dir);
+  }
+}
 
-  if (resting) {
+function update(dt) {
+  updateInput(dt);
+  if (state.over) return;
+
+  const p = state.cur;
+  let step = gravitySeconds(state.level) * 1000;
+  if (input.soft) step /= SOFT_DROP;
+
+  if (grounded()) {
     state.lockAcc += dt;
     state.gravityAcc = 0;
     if (state.lockAcc >= LOCK_DELAY) lock();
@@ -191,12 +271,64 @@ function update(dt) {
   state.lockAcc = 0;
 
   state.gravityAcc += dt;
-  const step = gravitySeconds(state.level) * 1000;
-  while (state.gravityAcc >= step && !collides(p.id, p.r, p.x, p.y + 1)) {
+  while (state.gravityAcc >= step && shift(0, 1)) {
     state.gravityAcc -= step;
-    p.y++;
   }
 }
+
+// ---------------------------------------------------------------- input
+
+function startShift(dir) {
+  input.held = input.held.filter(d => d !== dir);
+  input.held.push(dir);
+  input.dasAcc = 0;
+  input.charged = false;
+  move(dir);
+}
+
+function stopShift(dir) {
+  const wasActive = activeDir() === dir;
+  input.held = input.held.filter(d => d !== dir);
+  if (wasActive && input.held.length) {
+    // fall back to the older direction with a fresh DAS
+    input.dasAcc = 0;
+    input.charged = false;
+  }
+}
+
+function onKeyDown(e) {
+  if (e.repeat) return;
+  switch (e.code) {
+    case 'ArrowLeft':  startShift(-1); break;
+    case 'ArrowRight': startShift(1); break;
+    case 'ArrowDown':  input.soft = true; break;
+    case 'ArrowUp': case 'KeyX': rotate(0); break;
+    case 'KeyZ': case 'ControlLeft': rotate(1); break;
+    case 'Space': hardDrop(); break;
+    default: return;
+  }
+  e.preventDefault();
+}
+
+function onKeyUp(e) {
+  switch (e.code) {
+    case 'ArrowLeft':  stopShift(-1); break;
+    case 'ArrowRight': stopShift(1); break;
+    case 'ArrowDown':  input.soft = false; break;
+    default: return;
+  }
+  e.preventDefault();
+}
+
+// Losing focus drops every held key so nothing auto-repeats into a wall.
+function releaseAll() {
+  input.held = [];
+  input.soft = false;
+}
+
+window.addEventListener('keydown', onKeyDown);
+window.addEventListener('keyup', onKeyUp);
+window.addEventListener('blur', releaseAll);
 
 // ---------------------------------------------------------------- 5. render
 
@@ -263,6 +395,6 @@ spawn();
 requestAnimationFrame(frame);
 
 // Debug handle: lets a test harness (or a curious reader) drive the loop.
-window.__tetris = { state, board, PIECES, KICKS, collides, frame, W, H, HIDDEN };
+window.__tetris = { state, input, board, PIECES, KICKS, collides, frame, move, rotate, hardDrop, onKeyDown, onKeyUp, W, H, HIDDEN };
 
 })();
