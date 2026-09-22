@@ -55,8 +55,9 @@ canvas {
 }
 
 #hold, #next { width: 120px; }
-#hold { height: 120px; }
-#next { height: 360px; }
+#hold { height: 60px; }
+#next { height: 300px; }
+#seed { font-size: 11px; color: var(--muted); }
 
 .board-wrap {
   position: relative;

@@ -93,6 +93,7 @@ const ARR = 33;           // ms between auto-repeat shifts
 const SOFT_DROP = 20;     // soft drop runs gravity this many times faster
 const CLEAR_FLASH = 120;  // ms full rows stay on screen, white, before collapsing
 const LINES_PER_LEVEL = 10;
+const NEXT_COUNT = 5;     // pieces shown in the preview; a 7-bag makes five plannable
 
 // Guideline scoring, all multiplied by level at award time.
 const SCORE = {
@@ -150,21 +151,49 @@ function boardEmpty() {
 
 // ---------------------------------------------------------------- 3. pieces
 
+// Seeded PRNG (mulberry32) so a game is replayable: the seed lives in the
+// URL hash, reload gives the same bag, and the URL can be sent to someone.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+function seedFromHash() {
+  const m = /seed=(\d+)/.exec(location.hash);
+  return m ? Number(m[1]) >>> 0 : null;
+}
+let rng = Math.random;
+
 // 7-bag randomizer: every piece once per bag, so droughts are bounded.
 let bag = [];
-function nextId() {
+function bagNext() {
   if (bag.length === 0) {
     for (let i = 1; i <= 7; i++) bag.push(i);
     for (let i = bag.length - 1; i > 0; i--) {
-      const j = Math.floor(Math.random() * (i + 1));
+      const j = Math.floor(rng() * (i + 1));
       [bag[i], bag[j]] = [bag[j], bag[i]];
     }
   }
   return bag.pop();
 }
 
+// The preview queue is always NEXT_COUNT long; spawn takes from its head.
+const queue = [];
+function nextId() {
+  while (queue.length <= NEXT_COUNT) queue.push(bagNext());
+  return queue.shift();
+}
+
 const state = {
   cur: null,        // { id, r, x, y, lowestY, spun, kick }
+  hold: 0,          // parked piece id, 0 = none
+  holdUsed: false,  // hold is allowed once per piece
+  seed: 0,          // bag seed, shown in the HUD and the URL hash
   score: 0,
   lines: 0,
   level: 1,
@@ -190,18 +219,31 @@ const input = {
 };
 const activeDir = () => input.held.length ? input.held[input.held.length - 1] : 0;
 
-function reset() {
+// New game. seed: a number to replay, or undefined for a fresh one.
+function reset(seed) {
+  if (seed === undefined) seed = (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
+  state.seed = seed;
+  rng = mulberry32(seed);
+  if (typeof location !== 'undefined' && location.hash !== '#seed=' + seed) {
+    try { history.replaceState(null, '', '#seed=' + seed); } catch (e) { /* file:// may refuse */ }
+  }
   board.fill(0);
   bag = [];
+  queue.length = 0;
   Object.assign(state, {
-    cur: null, score: 0, lines: 0, level: 1, combo: -1, b2b: false,
+    cur: null, hold: 0, holdUsed: false, score: 0, lines: 0, level: 1, combo: -1, b2b: false,
     over: false, clearing: null, event: '', gravityAcc: 0, lockAcc: 0, lockResets: 0,
   });
   spawn();
 }
 
-function spawn() {
-  const id = nextId();
+function spawn(id = nextId()) {
+  state.holdUsed = false;
+  place(id);
+}
+
+// Put piece `id` at the spawn point (also used when un-holding).
+function place(id) {
   const n = PIECES[id].n;
   const x = Math.floor((W - n) / 2);   // 3 for both 3x3 and 4x4 boxes
   // Bottom row of the box on the top visible row; if that is blocked try one
@@ -217,6 +259,25 @@ function spawn() {
   }
   state.cur = { id, r: 0, x, y: HIDDEN - 2, lowestY: 0, spun: false, kick: -1 };
   state.over = true;   // block out
+}
+
+// Park the current piece and bring out the held one (or the next one).
+// Once per piece: the flag clears on the next natural spawn, so you cannot
+// swap back and forth to stall.
+function hold() {
+  if (state.over || !state.cur || state.holdUsed) return false;
+  const parked = state.hold;
+  state.hold = state.cur.id;
+  state.holdUsed = true;
+  if (parked) place(parked); else place(nextId());
+  return true;
+}
+
+// Row the piece would land on if hard-dropped. Used for the ghost.
+function ghostY(p) {
+  let y = p.y;
+  while (!collides(p.id, p.r, p.x, y + 1)) y++;
+  return y;
 }
 
 const grounded = () => { const p = state.cur; return collides(p.id, p.r, p.x, p.y + 1); };
@@ -442,7 +503,8 @@ function onKeyDown(e) {
     case 'ArrowUp': case 'KeyX': rotate(0); break;
     case 'KeyZ': case 'ControlLeft': rotate(1); break;
     case 'Space': hardDrop(); break;
-    case 'KeyR': reset(); break;
+    case 'KeyC': case 'ShiftLeft': case 'ShiftRight': hold(); break;
+    case 'KeyR': reset(e.shiftKey ? state.seed : undefined); break;   // Shift+R replays the same seed
     case 'Enter': if (state.over) reset(); break;
     default: return;
   }
@@ -473,10 +535,19 @@ window.addEventListener('blur', releaseAll);
 
 const canvas = document.getElementById('board');
 const ctx = canvas.getContext('2d');
+const nextCanvas = document.getElementById('next');
+const holdCanvas = document.getElementById('hold');
+const nctx = nextCanvas.getContext('2d');
+const hctx = holdCanvas.getContext('2d');
+const PREVIEW_CELL = 20;
+const PREVIEW_W = 4 * PREVIEW_CELL + 2 * PREVIEW_CELL;   // 4 cells plus a cell of margin each side
+const PREVIEW_H = 3 * PREVIEW_CELL;
 const hud = {
   score: document.getElementById('score'),
   level: document.getElementById('level'),
   lines: document.getElementById('lines'),
+  seed: document.getElementById('seed'),
+  holdPanel: document.getElementById('hold-panel'),
   event: document.getElementById('event'),
   overlay: document.getElementById('overlay'),
   overlayTitle: document.getElementById('overlay-title'),
@@ -493,6 +564,8 @@ function fitCanvas(c, cssW, cssH) {
   c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 fitCanvas(canvas, W * CELL, VIS * CELL);
+fitCanvas(nextCanvas, PREVIEW_W, PREVIEW_H * NEXT_COUNT);
+fitCanvas(holdCanvas, PREVIEW_W, PREVIEW_H);
 
 function drawCell(c, x, y, color, size = CELL) {
   const px = x * size, py = y * size;
@@ -505,6 +578,39 @@ function drawCell(c, x, y, color, size = CELL) {
   c.fillStyle = 'rgba(0,0,0,.3)';
   c.fillRect(px, py + size - 2, size, 2);
   c.fillRect(px + size - 2, py, 2, size);
+}
+
+// Ghost cells are an outline in the piece colour: a filled ghost blends into
+// the stack (agent-5 and agent-6 both found this).
+function drawGhostCell(c, x, y, color, size = CELL) {
+  c.strokeStyle = color;
+  c.lineWidth = 2;
+  c.strokeRect(x * size + 2, y * size + 2, size - 4, size - 4);
+}
+
+// Mix a hex colour toward white by t in [0,1].
+function lighten(hex, t) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  const f = (v) => Math.round(v + (255 - v) * t);
+  return `rgb(${f(r)},${f(g)},${f(b)})`;
+}
+
+// Draw piece `id` in its spawn orientation centred in preview slot `slot`.
+function drawPreview(c, id, slot, dim = false) {
+  const cells = PIECES[id].rot[0];
+  let minX = 9, maxX = -1, minY = 9, maxY = -1;
+  for (const [x, y] of cells) {
+    if (x < minX) minX = x; if (x > maxX) maxX = x;
+    if (y < minY) minY = y; if (y > maxY) maxY = y;
+  }
+  const w = (maxX - minX + 1) * PREVIEW_CELL, h = (maxY - minY + 1) * PREVIEW_CELL;
+  const ox = (PREVIEW_W - w) / 2, oy = slot * PREVIEW_H + (PREVIEW_H - h) / 2;
+  c.save();
+  c.translate(ox - minX * PREVIEW_CELL, oy - minY * PREVIEW_CELL);
+  if (dim) c.globalAlpha = 0.35;
+  for (const [x, y] of cells) drawCell(c, x, y, COLORS[id], PREVIEW_CELL);
+  c.restore();
 }
 
 function renderBoard() {
@@ -529,20 +635,48 @@ function renderBoard() {
     }
   }
 
-  // falling piece
+  // ghost first, then the falling piece on top. A grounded piece lightens as
+  // the lock delay runs out so the lock is never a surprise (agent-5).
   const p = state.cur;
   if (p && !state.over) {
+    const gy = ghostY(p);
+    if (gy !== p.y) {
+      for (const [cx, cy] of PIECES[p.id].rot[p.r]) {
+        const y = gy + cy - HIDDEN;
+        if (y >= 0) drawGhostCell(ctx, p.x + cx, y, COLORS[p.id]);
+      }
+    }
+    const ripeness = gy === p.y ? Math.min(state.lockAcc / LOCK_DELAY, 1) : 0;
+    const color = ripeness > 0 ? lighten(COLORS[p.id], ripeness * 0.6) : COLORS[p.id];
     for (const [cx, cy] of PIECES[p.id].rot[p.r]) {
       const y = p.y + cy - HIDDEN;
-      if (y >= 0) drawCell(ctx, p.x + cx, y, COLORS[p.id]);
+      if (y >= 0) drawCell(ctx, p.x + cx, y, color);
     }
+  }
+}
+
+// Next and hold canvases redraw only when what they show changes (agent-3).
+const panels = { queue: '', hold: '' };
+function renderPanels() {
+  const q = queue.slice(0, NEXT_COUNT).join(',');
+  if (panels.queue !== q) {
+    panels.queue = q;
+    nctx.clearRect(0, 0, PREVIEW_W, PREVIEW_H * NEXT_COUNT);
+    queue.slice(0, NEXT_COUNT).forEach((id, i) => drawPreview(nctx, id, i));
+  }
+  const h = state.hold + (state.holdUsed ? 'u' : '');
+  if (panels.hold !== h) {
+    panels.hold = h;
+    hctx.clearRect(0, 0, PREVIEW_W, PREVIEW_H);
+    if (state.hold) drawPreview(hctx, state.hold, 0, state.holdUsed);
   }
 }
 
 // DOM writes only when a value changes (from agent-3); textContent every
 // frame is wasted layout work.
-const shown = { score: -1, level: -1, lines: -1, event: null, overlay: null };
+const shown = { score: -1, level: -1, lines: -1, seed: -1, event: null, overlay: null };
 function renderHud() {
+  if (shown.seed !== state.seed) hud.seed.textContent = shown.seed = state.seed;
   if (shown.score !== state.score) hud.score.textContent = shown.score = state.score;
   if (shown.level !== state.level) hud.level.textContent = shown.level = state.level;
   if (shown.lines !== state.lines) hud.lines.textContent = shown.lines = state.lines;
@@ -561,18 +695,19 @@ function renderHud() {
 
 function render() {
   renderBoard();
+  renderPanels();
   renderHud();
 }
 
 // ---------------------------------------------------------------- go
 
-spawn();
+reset(seedFromHash() ?? undefined);
 requestAnimationFrame(frame);
 
 // Debug handle: lets a test harness (or a curious reader) drive the loop.
 window.__tetris = {
-  state, input, board, PIECES, KICKS, SCORE, collides, frame, move, rotate, hardDrop,
-  lock, reset, tspinKind, fullRows, onKeyDown, onKeyUp, W, H, HIDDEN,
+  state, input, board, queue, PIECES, KICKS, SCORE, collides, frame, move, rotate, hardDrop,
+  hold, ghostY, lock, reset, tspinKind, fullRows, mulberry32, onKeyDown, onKeyUp, W, H, HIDDEN, NEXT_COUNT,
 };
 
 })();
