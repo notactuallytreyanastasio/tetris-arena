@@ -85,6 +85,9 @@ first minute, so the interesting differences were smaller.
   clearing lock. Taken, but moved into `award()` next to back-to-back so
   every scoring rule lives in one function and the two counters reset in the
   same branch.
+- **agent-8**: perfect-clear bonus (800/1200/1800/2000 x level when the
+  board empties). Taken; checked after the rows collapse and over the whole
+  array, hidden rows included.
 - **agent-1**: a 40-row board so no cell can ever be above the array and
   collision needs no negative-y guard. Read, not taken: the guard here is one
   line, and a 20-row render offset in every draw call costs more than it
