@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Tetris — agent-8</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="arena">
+    <aside class="panel side-left">
+      <section class="stat"><h2>Hold</h2><canvas id="hold"></canvas></section>
+    </aside>
+    <div class="stage">
+      <canvas id="board"></canvas>
+      <div id="clear" class="clear-label"></div>
+    </div>
+    <aside class="panel">
+      <section class="stat"><h2>Next</h2><canvas id="next"></canvas></section>
+      <section class="stat"><h2>Score</h2><div id="score">0</div></section>
+      <section class="stat"><h2>Level</h2><div id="level">1</div></section>
+      <section class="stat"><h2>Lines</h2><div id="lines">0</div></section>
+      <section class="stat"><h2>Best</h2><div id="best">0</div></section>
+      <div id="seed" class="seed"></div>
+      <section class="keys">
+        <div><kbd>←</kbd><kbd>→</kbd> move</div>
+        <div><kbd>↑</kbd><kbd>X</kbd> rotate cw</div>
+        <div><kbd>Z</kbd> rotate ccw</div>
+        <div><kbd>A</kbd> rotate 180</div>
+        <div><kbd>C</kbd><kbd>Shift</kbd> hold</div>
+        <div><kbd>↓</kbd> soft drop</div>
+        <div><kbd>Space</kbd> hard drop</div>
+        <div><kbd>P</kbd><kbd>Esc</kbd> pause</div>
+        <div><kbd>R</kbd> restart, <kbd>Shift</kbd><kbd>R</kbd> replay seed</div>
+      </section>
+    </aside>
+  </main>
+  <script src="js/pieces.js"></script>
+  <script src="js/board.js"></script>
+  <script src="js/game.js"></script>
+  <script src="js/render.js"></script>
+  <script src="js/input.js"></script>
+  <script src="js/hud.js"></script>
+  <script src="js/main.js"></script>
+</body>
+</html>
