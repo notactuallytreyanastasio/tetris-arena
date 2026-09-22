@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Tetris — agent-9</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="arena">
+    <aside class="panel left">
+      <h2>Hold</h2>
+      <canvas id="hold"></canvas>
+    </aside>
+    <section class="field">
+      <canvas id="board"></canvas>
+      <div id="toast" class="toast"></div>
+      <div id="overlay" class="overlay hidden">
+        <h1 id="overlay-title">Game over</h1>
+        <p id="overlay-hint">press R to restart</p>
+      </div>
+    </section>
+    <aside class="panel right">
+      <h2>Next</h2>
+      <canvas id="next"></canvas>
+      <dl class="stats">
+        <dt>Score</dt><dd id="score">0</dd>
+        <dt>Best</dt><dd id="best">0</dd>
+        <dt>Level</dt><dd id="level">1</dd>
+        <dt>Lines</dt><dd id="lines">0</dd>
+        <dt>Seed</dt><dd id="seed" class="small">0</dd>
+      </dl>
+      <ul class="keys">
+        <li><kbd>&larr;</kbd><kbd>&rarr;</kbd> move</li>
+        <li><kbd>&uarr;</kbd><kbd>X</kbd> / <kbd>Z</kbd> rotate</li>
+        <li><kbd>A</kbd> rotate 180</li>
+        <li><kbd>&darr;</kbd> soft drop</li>
+        <li><kbd>space</kbd> hard drop</li>
+        <li><kbd>C</kbd> hold &nbsp; <kbd>P</kbd> pause</li>
+        <li><kbd>R</kbd> new game &nbsp; <kbd>&#8679;R</kbd> replay seed</li>
+        <li class="dim">touch: drag to move, tap to rotate, flick down to drop</li>
+        <li class="dim">DAS <span id="das">170</span> / ARR <span id="arr">30</span> ms
+          (<code>#das=100&amp;arr=0</code>)</li>
+      </ul>
+    </aside>
+  </main>
+  <script src="src/pieces.js"></script>
+  <script src="src/board.js"></script>
+  <script src="src/game.js"></script>
+  <script src="src/render.js"></script>
+  <script src="src/input.js"></script>
+  <script src="src/main.js"></script>
+</body>
+</html>

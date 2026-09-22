@@ -1,0 +1,141 @@
+:root {
+  --bg: #05070f;
+  --panel: #0f1629;
+  --ink: #e5e7eb;
+  --muted: #94a3b8;
+  --accent: #22d3ee;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: radial-gradient(ellipse at top, #101a33 0%, var(--bg) 60%);
+  color: var(--ink);
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.arena {
+  min-height: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 24px;
+  padding: 32px 16px;
+}
+
+.field {
+  position: relative;
+  border: 2px solid #1e293b;
+  border-radius: 6px;
+  box-shadow: 0 0 0 1px #0b1020, 0 20px 60px rgba(0,0,0,0.6);
+  line-height: 0;
+}
+
+.panel {
+  width: 150px;
+  padding-top: 4px;
+}
+
+.panel h2 {
+  margin: 0 0 8px;
+  font-size: 12px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.panel canvas {
+  display: block;
+  background: var(--panel);
+  border: 1px solid #1e293b;
+  border-radius: 4px;
+}
+
+.stats {
+  margin: 24px 0 0;
+}
+.stats dt {
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--muted);
+  margin-top: 14px;
+}
+.stats dd {
+  margin: 2px 0 0;
+  font-size: 26px;
+  color: var(--ink);
+}
+.stats dd.small {
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.hidden { display: none !important; }
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(5, 7, 15, 0.82);
+  line-height: 1.4;
+  text-align: center;
+}
+.overlay h1 {
+  margin: 0;
+  font-size: 28px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--accent);
+}
+.overlay p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.toast {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 38%;
+  text-align: center;
+  font-size: 15px;
+  letter-spacing: 0.18em;
+  color: #fff;
+  text-shadow: 0 0 12px var(--accent), 0 2px 4px #000;
+  line-height: 1.6;
+  pointer-events: none;
+  opacity: 0;
+  transition: opacity 120ms;
+}
+.toast.show { opacity: 1; }
+
+.keys {
+  list-style: none;
+  padding: 0;
+  margin: 28px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 2;
+}
+kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 0 5px;
+  border: 1px solid #334155;
+  border-bottom-width: 2px;
+  border-radius: 3px;
+  background: #0f1629;
+  color: var(--ink);
+  font: inherit;
+  text-align: center;
+}
+
+.keys .dim { color: #64748b; margin-top: 8px; line-height: 1.5; }
+.keys code { color: var(--muted); }
