@@ -2,11 +2,11 @@
 
 Open `index.html`. No build, no dependencies. Three files: `index.html`
 (layout and key legend), `style.css`, `game.js` (everything else, one
-closure, about 680 lines).
+closure, about 750 lines). `node test/run.js` runs 123 headless checks.
 
 Keys: arrows move and soft drop, Up or X rotates clockwise, Z
-counter-clockwise, Space hard drops, C or Shift holds, P or Escape pauses,
-R restarts.
+counter-clockwise, A rotates 180, Space hard drops, C or Shift holds, P or
+Escape pauses, R restarts, Shift+R restarts with the same piece sequence.
 
 ## Design
 
@@ -25,7 +25,14 @@ rotating the box clockwise, `(x, y) -> (n - 1 - y, x)`. That is exactly
 what SRS specifies, so the published kick tables apply unchanged. The kick
 tables are stored as published (y up) and flipped once at load, so anyone
 checking them against the wiki sees the same numbers. O is pinned to its
-spawn cells.
+spawn cells. 180 rotation uses TETR.IO's SRS+ six-test table, the same for
+every piece; guideline SRS has no 180, so this is a departure. A 180 never
+counts as the fifth kick for T-spin purposes, since that upgrade is
+defined for the 90-degree tables.
+
+**Randomiser** is a 7-bag over a seeded mulberry32. The seed is in the URL
+hash and the HUD, so a game can be sent to someone or replayed with
+Shift+R, and the tests pin a bag order for a known seed.
 
 **Loop** is a single `requestAnimationFrame`. Gravity, horizontal
 auto-repeat (DAS 170ms, ARR 40ms), lock delay (500ms, up to 15 move-resets
@@ -45,7 +52,9 @@ line clear.
 **Rendering** is canvas, whole board redrawn every frame, DPR-scaled. The
 ghost is an outline. While a piece rests on the stack it brightens in
 proportion to how much of its lock delay has elapsed and the ghost fades
-out at the same rate, so a lock is never a surprise.
+out at the same rate, so a lock is never a surprise. A hard drop leaves a
+120ms streak in the columns it fell through, since the drop itself is
+instantaneous.
 
 **Scoring** is the guideline table (100/300/500/800 times level), T-spins
 by the 3-corner rule (400/800/1200/1600, mini 100/200/400, full if both
@@ -64,14 +73,13 @@ Best score is kept in `localStorage`.
 
 ## What does not work
 
-- No 180 rotation.
 - Soft drop is gravity divided by 20, so it gets faster with level rather
   than being a fixed rate.
 - No sound, no touch controls.
 - Only seen in a browser as a headless Chrome screenshot (board, ghost,
-  queue, HUD all render). Every behaviour above was checked in a headless
-  Node harness that stubs the DOM and drives frames at 16ms: 101 checks
-  across four suites, kept outside the repo.
+  queue, HUD all render). Every behaviour above is checked by `test/`: a
+  harness that stubs the DOM so the real `game.js` runs unmodified, and
+  five suites that drive frames at 16ms. `node test/run.js` runs them all.
 
 ## Taken from whom
 
@@ -100,6 +108,14 @@ code. The differences came later.
   lock instead of one toast per event.
 - **agent-7**: combo and perfect-clear scoring, and naming the DAS-during-
   lock problem. Their fixed-rate soft drop I read and did not take.
+- **agent-3** again: the in-repo test runner. Seven agents took it before
+  I did; my tests had been sitting outside the repo.
+- **agent-8**: the SRS+ 180 kick table. **agent-6**: the rule that a 180
+  records kick 0, and the T-on-the-floor case that is the real test of it.
+- **agent-1**: seeded bag, seed in the URL hash, Shift+R replay.
+- **agent-4**: the hard-drop trail. Taken as is.
+- **agent-5**: capped the DAS charge during the flash after taking my fix.
+  I read it and found my clamp gives the same single shift at spawn.
 
 The full reasoning, including what was rejected, is on branch `agent-10`
 of the `tetris-arena` deciduous workspace.

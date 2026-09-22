@@ -71,11 +71,21 @@
     '30': [[0,0],[1,0],[-2,0],[1,-2],[-2,1]],
     '03': [[0,0],[-1,0],[2,0],[-1,2],[2,-1]],
   };
+  // 180-degree kicks from TETR.IO's SRS+ (guideline SRS has no 180). One
+  // table for every piece, six tests, y up like the two above.
+  const KICKS_180 = {
+    '02': [[0,0],[0,1],[1,1],[-1,1],[1,0],[-1,0]],
+    '20': [[0,0],[0,-1],[-1,-1],[1,-1],[-1,0],[1,0]],
+    '13': [[0,0],[1,0],[1,2],[1,1],[0,2],[0,1]],
+    '31': [[0,0],[-1,0],[-1,2],[-1,1],[0,2],[0,1]],
+  };
   const flipY = (t) => Object.fromEntries(Object.entries(t).map(([k, v]) => [k, v.map(([x, y]) => [x, -y])]));
-  const KICKS = { I: flipY(KICKS_I), O: { }, default: flipY(KICKS_JLSTZ) };
+  const KICKS = { I: flipY(KICKS_I), O: { }, default: flipY(KICKS_JLSTZ), half: flipY(KICKS_180) };
   for (const k of Object.keys(KICKS_JLSTZ)) KICKS.O[k] = [[0, 0]];
   function kicksFor(id, from, to) {
     const name = PIECES[id].name;
+    if (name === 'O') return KICKS.O['01'];
+    if ((to - from + 4) % 4 === 2) return KICKS.half[`${from}${to}`];
     return (KICKS[name] || KICKS.default)[`${from}${to}`];
   }
 
@@ -149,11 +159,30 @@
     while (state.queue.length < PREVIEW + 1) state.queue.push(nextFromBag());
   }
 
+  // mulberry32: a seeded PRNG so a game is replayable. The seed lives in
+  // the URL hash and the HUD; Shift+R restarts with the same one.
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  }
+  function seedFromHash() {
+    try { const m = /seed=(\d+)/.exec(location.hash); return m ? Number(m[1]) >>> 0 : null; } catch (e) { return null; }
+  }
+  function publishSeed(seed) {
+    try { if (location.hash !== '#seed=' + seed) history.replaceState(null, '', '#seed=' + seed); } catch (e) { /* file:// may refuse */ }
+  }
+
   function nextFromBag() {
     if (state.bag.length === 0) {
       state.bag = [1, 2, 3, 4, 5, 6, 7];
       for (let i = 6; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
+        const j = Math.floor(state.rng() * (i + 1));
         [state.bag[i], state.bag[j]] = [state.bag[j], state.bag[i]];
       }
     }
@@ -176,6 +205,7 @@
   const COMBO_SCORE = 50;  // x combo x level
   const PERFECT_SCORE = [0, 800, 1200, 1800, 2000];
   const TOAST_MS = 900;
+  const TRAIL_MS = 120;
   const CLEAR_NAMES = ['', 'SINGLE', 'DOUBLE', 'TRIPLE', 'TETRIS'];
   const HISCORE_KEY = 'tetris-agent-10-hiscore';
 
@@ -189,7 +219,10 @@
     paused: false,
     combo: -1,          // consecutive clearing locks; -1 = none
     toasts: [],         // [{ text, ms }] scoring feedback drawn on the board
+    trail: null,        // { cols: [[x, fromY, toY]], ms } after a hard drop
     hiscore: 0,
+    seed: 0,
+    rng: Math.random,
     gravityMs: 1000,
     gravityAcc: 0,
     lockAcc: 0,
@@ -233,10 +266,15 @@
     showOverlay('Game over', 'R to restart');
   }
 
-  function reset() {
+  // New game. seed: a number to replay, or undefined for a fresh one.
+  function reset(seed) {
+    if (seed === undefined) seed = (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
+    state.seed = seed;
+    state.rng = mulberry32(seed);
+    publishSeed(seed);
     board.fill(0);
     state.bag = []; state.queue = []; state.hold = 0; state.holdUsed = false; state.clearing = null;
-    state.paused = false; state.combo = -1; state.toasts = [];
+    state.paused = false; state.combo = -1; state.toasts = []; state.trail = null;
     state.hiscore = loadHiscore();
     state.score = 0; state.lines = 0; state.level = 1; state.b2b = false;
     state.gravityMs = gravityMs(1);
@@ -299,7 +337,8 @@
       const nx = p.x + kicks[i][0], ny = p.y + kicks[i][1];
       if (!collides(p.id, to, nx, ny)) {
         p.rot = to; p.x = nx; p.y = ny;
-        p.spun = true; p.kick = i;
+        p.spun = true;
+        p.kick = dir === 2 ? 0 : i; // the fifth-kick T-spin upgrade is a 90-degree rule
         touched(p);
         return true;
       }
@@ -383,7 +422,15 @@
     if (!p) return;
     const y = dropY(p);
     addScore((y - p.y) * 2);
-    if (y !== p.y) { p.y = y; p.spun = false; }
+    if (y !== p.y) {
+      // one streak per column, from the cell's start row to its landing row
+      const cells = PIECES[p.id].cells[p.rot];
+      const top = {};
+      for (const [cx, cy] of cells) if (top[cx] === undefined || cy < top[cx]) top[cx] = cy;
+      const cols = Object.keys(top).map((cx) => [p.x + Number(cx), p.y + top[cx], y + top[cx]]);
+      state.trail = { cols, ms: TRAIL_MS };
+      p.y = y; p.spun = false;
+    }
     lockPiece();
   }
 
@@ -400,6 +447,7 @@
 
   function update(dt) {
     for (const t of state.toasts) t.ms -= dt;
+    if (state.trail && (state.trail.ms -= dt) <= 0) state.trail = null;
     if (state.toasts.length && state.toasts[0].ms <= 0) state.toasts = state.toasts.filter((t) => t.ms > 0);
     if (state.over || state.paused) return;
 
@@ -453,7 +501,7 @@
 
   function onKeyDown(e) {
     if (e.repeat) return; // we do our own repeat
-    if (e.code === 'KeyR') { reset(); e.preventDefault(); return; }
+    if (e.code === 'KeyR') { reset(e.shiftKey ? state.seed : undefined); e.preventDefault(); return; }
     if (e.code === 'KeyP' || e.code === 'Escape') { setPaused(!state.paused); e.preventDefault(); return; }
     if (state.over || state.paused) return;
     switch (e.code) {
@@ -462,6 +510,7 @@
       case 'ArrowDown':  state.soft = true; state.gravityAcc = state.gravityMs / SOFT_DROP; break;
       case 'ArrowUp': case 'KeyX': tryRotate(1); break;
       case 'KeyZ': case 'ControlLeft': tryRotate(-1); break;
+      case 'KeyA': tryRotate(2); break;
       case 'Space': hardDrop(); break;
       case 'KeyC': case 'ShiftLeft': case 'ShiftRight': holdPiece(); break;
       default: return;
@@ -509,8 +558,9 @@
     level: document.getElementById('level'),
     lines: document.getElementById('lines'),
     hiscore: document.getElementById('hiscore'),
+    seed: document.getElementById('seed'),
   };
-  const shown = { score: -1, level: -1, lines: -1, hiscore: -1 };
+  const shown = { score: -1, level: -1, lines: -1, hiscore: -1, seed: -1 };
   function updateHud() {
     for (const k of Object.keys(hud)) {
       if (shown[k] !== state[k]) { shown[k] = state[k]; hud[k].textContent = String(state[k]); }
@@ -620,6 +670,8 @@
       ctx.beginPath(); ctx.moveTo(0, y * CELL + 0.5); ctx.lineTo(COLS * CELL, y * CELL + 0.5); ctx.stroke();
     }
 
+    drawTrail();
+
     const flashing = state.clearing ? state.clearing.rows : null;
     for (let y = HIDDEN; y < ROWS; y++) {
       const flash = flashing && flashing.includes(y);
@@ -652,6 +704,22 @@
     drawPanels();
   }
 
+  // Fading vertical streak where a hard drop just passed.
+  function drawTrail() {
+    const t = state.trail;
+    if (!t) return;
+    const life = t.ms / TRAIL_MS;
+    for (const [x, fromY, toY] of t.cols) {
+      const y0 = Math.max(fromY - HIDDEN, 0), y1 = toY - HIDDEN;
+      if (y1 <= y0) continue;
+      const grad = ctx.createLinearGradient(0, y0 * CELL, 0, y1 * CELL);
+      grad.addColorStop(0, 'rgba(255,255,255,0)');
+      grad.addColorStop(1, `rgba(255,255,255,${(0.35 * life).toFixed(3)})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(x * CELL + 4, y0 * CELL, CELL - 8, (y1 - y0) * CELL);
+    }
+  }
+
   function drawToasts() {
     if (!state.toasts.length) return;
     ctx.textAlign = 'center';
@@ -671,9 +739,9 @@
 
   // ---------------------------------------------------------------- go
 
-  reset();
+  reset(seedFromHash() ?? undefined);
   requestAnimationFrame((t) => { last = t; frame(t); });
 
   // Debug handle for headless harnesses and the devtools console.
-  window.__tetris = { PIECES, KICKS, board, state, collides, lock, clearLines, fullRows, removeRows, gravityMs, spawn, reset, stepGravity, tryMove, tryRotate, hardDrop, holdPiece, tspinKind, dropY, finishClear, setPaused, update, frame, COLS, ROWS, HIDDEN, CLEAR_FLASH, DAS, ARR, TOAST_MS };
+  window.__tetris = { PIECES, KICKS, board, state, collides, lock, clearLines, fullRows, removeRows, gravityMs, spawn, reset, stepGravity, tryMove, tryRotate, hardDrop, holdPiece, tspinKind, dropY, finishClear, setPaused, update, frame, COLS, ROWS, HIDDEN, CLEAR_FLASH, DAS, ARR, TOAST_MS, TRAIL_MS, mulberry32 };
 })();
