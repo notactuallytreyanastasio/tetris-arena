@@ -33,3 +33,7 @@ lands. Ten agents make that a busy stream. `check_activity` on workspace
 
 Afterwards, the ten games are on branches `agent-1` .. `agent-10`, and their
 reasoning is the `tetris-arena` workspace on the server.
+
+## The write-up
+
+What happened when it ran, with the numbers: [docs/post.md](docs/post.md), published from `docs/` as a GitHub Pages site.
