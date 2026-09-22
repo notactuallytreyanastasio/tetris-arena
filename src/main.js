@@ -7,7 +7,8 @@
   const $ = id => document.getElementById(id);
   const game = new window.GameModule.Game();
   const renderer = new window.Renderer({
-    board: $('board'), score: $('score'), level: $('level'), lines: $('lines'),
+    board: $('board'), next: $('next'), hold: $('hold'),
+    score: $('score'), level: $('level'), lines: $('lines'),
     toast: $('toast'), overlay: $('overlay'),
     overlayTitle: $('overlay-title'), overlayHint: $('overlay-hint'),
   });

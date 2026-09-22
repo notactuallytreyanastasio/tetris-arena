@@ -47,6 +47,7 @@ html, body {
 }
 
 .panel canvas {
+  display: block;
   background: var(--panel);
   border: 1px solid #1e293b;
   border-radius: 4px;

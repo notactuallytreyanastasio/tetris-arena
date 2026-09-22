@@ -6,39 +6,81 @@
 
   const { COLS, ROWS, HIDDEN } = root.BoardModule;
   const { PIECES, COLORS } = root.Pieces;
-  const { CLEAR_ANIM_MS } = root.GameModule;
+  const { CLEAR_ANIM_MS, QUEUE_LEN } = root.GameModule;
 
-  const CELL = 30; // CSS pixels
+  const CELL = 30;         // CSS pixels on the field
+  const MINI = 18;         // CSS pixels in the next/hold panels
+  const SLOT_H = 3;        // rows per preview slot
+  const PANEL_COLS = 6;    // 4-wide piece centred in 6 cells
 
-  function setupCanvas(canvas, cols, rows) {
+  // Size a canvas to w x h CSS pixels with a devicePixelRatio-scaled
+  // backing store so cell edges are crisp on retina screens.
+  function setupCanvas(canvas, w, h) {
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = cols * CELL * dpr;
-    canvas.height = rows * CELL * dpr;
-    canvas.style.width = cols * CELL + 'px';
-    canvas.style.height = rows * CELL + 'px';
+    canvas.width = w * dpr;
+    canvas.height = h * dpr;
+    canvas.style.width = w + 'px';
+    canvas.style.height = h + 'px';
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     return ctx;
   }
 
   // A cell with a bevel: base color, light top-left edge, dark bottom-right.
-  function drawCell(ctx, x, y, color, alpha) {
-    const px = x * CELL, py = y * CELL;
+  function drawCell(ctx, x, y, color, size, alpha) {
+    size = size || CELL;
+    const px = x * size, py = y * size, b = Math.max(2, Math.round(size / 10));
     ctx.globalAlpha = alpha == null ? 1 : alpha;
     ctx.fillStyle = color;
-    ctx.fillRect(px, py, CELL, CELL);
+    ctx.fillRect(px, py, size, size);
     ctx.fillStyle = 'rgba(255,255,255,0.28)';
-    ctx.fillRect(px, py, CELL, 3);
-    ctx.fillRect(px, py, 3, CELL);
+    ctx.fillRect(px, py, size, b);
+    ctx.fillRect(px, py, b, size);
     ctx.fillStyle = 'rgba(0,0,0,0.30)';
-    ctx.fillRect(px, py + CELL - 3, CELL, 3);
-    ctx.fillRect(px + CELL - 3, py, 3, CELL);
+    ctx.fillRect(px, py + size - b, size, b);
+    ctx.fillRect(px + size - b, py, b, size);
     ctx.globalAlpha = 1;
+  }
+
+  // Ghost: outline (taken from agent-5) plus a faint fill so it still reads
+  // against the grid when the eye is on the stack.
+  function drawGhostCell(ctx, x, y, color) {
+    const px = x * CELL, py = y * CELL;
+    ctx.globalAlpha = 0.12;
+    ctx.fillStyle = color;
+    ctx.fillRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.globalAlpha = 0.8;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 2;
+    ctx.strokeRect(px + 2, py + 2, CELL - 4, CELL - 4);
+    ctx.globalAlpha = 1;
+  }
+
+  // Mix a hex colour toward white by t in [0, 1].
+  function lighten(hex, t) {
+    const n = parseInt(hex.slice(1), 16);
+    const f = v => Math.round(v + (255 - v) * t);
+    return 'rgb(' + f(n >> 16) + ',' + f((n >> 8) & 255) + ',' + f(n & 255) + ')';
+  }
+
+  // Draw one piece in its spawn orientation centred in a preview slot.
+  function drawMini(ctx, type, slot, dim) {
+    const def = PIECES[type];
+    const cells = def.states[0];
+    const w = Math.max(...cells.map(c => c[0])) + 1;
+    const h = Math.max(...cells.map(c => c[1])) + 1;
+    const minX = Math.min(...cells.map(c => c[0]));
+    const minY = Math.min(...cells.map(c => c[1]));
+    const ox = (PANEL_COLS - (w - minX)) / 2 - minX;
+    const oy = slot * SLOT_H + (SLOT_H - (h - minY)) / 2 - minY;
+    for (const [dx, dy] of cells) drawCell(ctx, ox + dx, oy + dy, def.color, MINI, dim ? 0.3 : 1);
   }
 
   class Renderer {
     constructor(els) {
-      this.ctx = setupCanvas(els.board, COLS, ROWS);
+      this.ctx = setupCanvas(els.board, COLS * CELL, ROWS * CELL);
+      this.nextCtx = setupCanvas(els.next, PANEL_COLS * MINI, QUEUE_LEN * SLOT_H * MINI);
+      this.holdCtx = setupCanvas(els.hold, PANEL_COLS * MINI, SLOT_H * MINI);
       this.els = els;
       // Last values written to the DOM; textContent only changes when a
       // value does (taken from agent-3).
@@ -47,7 +89,18 @@
 
     draw(game, paused) {
       this.drawBoard(game);
+      this.drawPanels(game);
       this.drawHud(game, paused);
+    }
+
+    drawPanels(game) {
+      const n = this.nextCtx, h = this.holdCtx;
+      n.fillStyle = '#0f1629';
+      n.fillRect(0, 0, PANEL_COLS * MINI, QUEUE_LEN * SLOT_H * MINI);
+      for (let i = 0; i < QUEUE_LEN && i < game.queue.length; i++) drawMini(n, game.queue[i], i, false);
+      h.fillStyle = '#0f1629';
+      h.fillRect(0, 0, PANEL_COLS * MINI, SLOT_H * MINI);
+      if (game.hold) drawMini(h, game.hold, 0, game.holdUsed);
     }
 
     drawHud(game, paused) {
@@ -109,13 +162,25 @@
         }
       }
 
-      // active piece
+      // ghost, then the active piece. While the piece rests on the stack it
+      // brightens as the lock delay runs out (taken from agent-5), so the
+      // lock is never a surprise.
       if (game.piece && !game.over) {
         const p = game.piece;
         const def = PIECES[p.type];
-        for (const [dx, dy] of def.states[p.rot]) {
+        const cells = def.states[p.rot];
+        const gy = game.ghostY();
+        if (gy !== p.y) {
+          for (const [dx, dy] of cells) {
+            const y = gy + dy - HIDDEN;
+            if (y >= 0) drawGhostCell(ctx, p.x + dx, y, def.color);
+          }
+        }
+        const t = game.lockProgress();
+        const color = t > 0 ? lighten(def.color, t * 0.6) : def.color;
+        for (const [dx, dy] of cells) {
           const y = p.y + dy - HIDDEN;
-          if (y >= 0) drawCell(ctx, p.x + dx, y, def.color);
+          if (y >= 0) drawCell(ctx, p.x + dx, y, color);
         }
       }
     }

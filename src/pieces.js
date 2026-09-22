@@ -68,10 +68,15 @@
     '0>3': [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
   };
 
+  // 180-degree rotation is not in the guideline; this is the small list
+  // most modern clients use (in place, then a cell sideways, then up).
+  const KICKS_180 = [[0, 0], [1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1], [0, 2]];
+
   function kicksFor(type, from, to) {
     if (type === 'O') return [[0, 0]];
-    const table = type === 'I' ? KICKS_I : KICKS_JLSTZ;
-    return table[from + '>' + to].map(([dx, dy]) => [dx, -dy]);
+    const table = (to - from + 4) % 4 === 2 ? null : type === 'I' ? KICKS_I : KICKS_JLSTZ;
+    const list = table ? table[from + '>' + to] : KICKS_180;
+    return list.map(([dx, dy]) => [dx, -dy]);
   }
 
   // 7-bag randomizer: every run of seven contains each tetromino exactly

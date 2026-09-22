@@ -21,6 +21,7 @@
     KeyX: 'cw',
     KeyZ: 'ccw',
     ControlLeft: 'ccw',
+    KeyA: 'flip',
     Space: 'hard',
     KeyC: 'hold',
     ShiftLeft: 'hold',
@@ -75,6 +76,12 @@
           break;
         case 'ccw':
           this.game.rotate(-1);
+          break;
+        case 'flip':
+          this.game.rotate(2);
+          break;
+        case 'hold':
+          this.game.holdPiece();
           break;
         case 'hard':
           this.game.hardDrop();

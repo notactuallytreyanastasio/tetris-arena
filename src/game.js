@@ -14,6 +14,7 @@
   const SOFT_DROP_FACTOR = 20; // soft drop = 20x gravity
   const LINES_PER_LEVEL = 10;
   const TOAST_MS = 1400;
+  const QUEUE_LEN = 5;
 
   // Guideline scoring, all multiplied by level.
   const SCORE = {
@@ -51,6 +52,9 @@
       this.score = 0;
       this.lines = 0;
       this.level = 1;
+      this.queue = [];          // upcoming piece types, QUEUE_LEN long
+      this.hold = null;         // parked piece type
+      this.holdUsed = false;    // hold is once per piece
       this.combo = -1;          // consecutive line-clearing locks; -1 = none
       this.b2b = false;         // last clear was a tetris or T-spin
       this.toast = null;        // { text, t } naming the last clear
@@ -73,11 +77,20 @@
       return P.PIECES[this.piece.type].states[this.piece.rot];
     }
 
-    // Spawn fully inside the hidden rows, centred, then apply one immediate
-    // drop so the piece is visible on its first frame (guideline spawn).
-    // If even the hidden position collides, that is a block out: game over.
-    spawn() {
-      const type = this.bag.next();
+    takeNext() {
+      while (this.queue.length <= QUEUE_LEN) this.queue.push(this.bag.next());
+      return this.queue.shift();
+    }
+
+    // Spawn the next queued piece (or `type` if given, for hold) fully
+    // inside the hidden rows, centred, then apply one immediate drop so the
+    // piece is visible on its first frame (guideline spawn). If even the
+    // hidden position collides, that is a block out: game over.
+    spawn(type) {
+      if (!type) {
+        type = this.takeNext();
+        this.holdUsed = false;
+      }
       const def = P.PIECES[type];
       const maxDy = Math.max(...def.states[0].map(c => c[1]));
       const piece = {
@@ -167,6 +180,23 @@
 
     softDrop(on) {
       this.softDropping = !!on;
+    }
+
+    // Park the active piece and bring out the held one (or the next piece
+    // if nothing is held). Once per piece: allowed again after a lock.
+    holdPiece() {
+      if (!this.active() || this.holdUsed) return false;
+      const parked = this.hold;
+      this.hold = this.piece.type;
+      this.spawn(parked || this.takeNext());
+      this.holdUsed = true;
+      return true;
+    }
+
+    // 0..1 fraction of the lock delay used up, 0 while the piece can fall.
+    lockProgress() {
+      if (!this.active() || !this.isGrounded()) return 0;
+      return Math.min(this.lockTimer / LOCK_DELAY_MS, 1);
     }
 
     // Drop to the ghost position and lock immediately. Returns rows dropped.
@@ -340,6 +370,6 @@
 
   root.GameModule = {
     Game, gravityMsForLevel, SCORE,
-    LOCK_DELAY_MS, LOCK_RESET_CAP, CLEAR_ANIM_MS, TOAST_MS, LINES_PER_LEVEL,
+    LOCK_DELAY_MS, LOCK_RESET_CAP, CLEAR_ANIM_MS, TOAST_MS, LINES_PER_LEVEL, QUEUE_LEN,
   };
 })(typeof module !== 'undefined' ? module.exports : window);
