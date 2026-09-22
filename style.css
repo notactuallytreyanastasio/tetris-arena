@@ -68,6 +68,10 @@ html, body {
   font-size: 26px;
   color: var(--ink);
 }
+.stats dd.small {
+  font-size: 13px;
+  color: var(--muted);
+}
 
 .hidden { display: none !important; }
 

@@ -87,7 +87,7 @@
           this.game.hardDrop();
           break;
         default:
-          if (this.hooks[action]) this.hooks[action]();
+          if (this.hooks[action]) this.hooks[action](e);
       }
     }
 

@@ -5,10 +5,18 @@
   'use strict';
 
   const $ = id => document.getElementById(id);
-  const game = new window.GameModule.Game();
+
+  // The bag seed lives in the URL hash: reload replays the same game and
+  // the link can be sent to someone (taken from agent-1).
+  const seedFromHash = () => { const m = /seed=(\d+)/.exec(location.hash); return m ? Number(m[1]) >>> 0 : undefined; };
+  const game = new window.GameModule.Game({ seed: seedFromHash() });
+  const publishSeed = () => {
+    try { if (location.hash !== '#seed=' + game.seed) history.replaceState(null, '', '#seed=' + game.seed); } catch (e) { /* file:// may refuse */ }
+  };
+  publishSeed();
   const renderer = new window.Renderer({
     board: $('board'), next: $('next'), hold: $('hold'),
-    score: $('score'), best: $('best'), level: $('level'), lines: $('lines'),
+    score: $('score'), best: $('best'), level: $('level'), lines: $('lines'), seed: $('seed'),
     toast: $('toast'), overlay: $('overlay'),
     overlayTitle: $('overlay-title'), overlayHint: $('overlay-hint'),
   });
@@ -22,7 +30,8 @@
   let wasOver = false;
 
   const input = new window.Input.Input(game, {
-    restart() { game.reset(); wasOver = false; },
+    // R starts a fresh seed; Shift+R replays the current one.
+    restart(e) { game.reset(e && e.shiftKey ? game.seed : undefined); publishSeed(); wasOver = false; },
     pause() { game.setPaused(!game.paused); },
   });
   input.attach(window);

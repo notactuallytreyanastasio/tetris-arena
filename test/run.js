@@ -5,16 +5,16 @@
 'use strict';
 const path = require('path');
 const src = f => require(path.join(__dirname, '..', 'src', f));
-const { Game, SCORE, CLEAR_ANIM_MS, LOCK_DELAY_MS, LOCK_RESET_CAP, QUEUE_LEN } = src('game.js').GameModule;
+const { Game, SCORE, CLEAR_ANIM_MS, LOCK_DELAY_MS, LOCK_RESET_CAP, QUEUE_LEN, TRAIL_MS } = src('game.js').GameModule;
 const { COLS, HIDDEN, TOTAL, Board } = src('board.js').BoardModule;
-const { PIECES, TYPES, kicksFor } = src('pieces.js').Pieces;
+const { PIECES, TYPES, kicksFor, mulberry32 } = src('pieces.js').Pieces;
 
 let fails = 0, total = 0;
 const check = (name, cond) => { total++; console.log((cond ? 'ok   ' : 'FAIL ') + name); if (!cond) fails++; };
 const section = t => console.log('\n# ' + t);
 // A bag that deals the given types in order, for deterministic setups.
 const fixed = types => { let i = 0; return { next: () => types[i++ % types.length] }; };
-function mk(types) { const g = new Game(); g.bag = fixed(types); g.reset(); return g; }
+function mk(types) { return new Game({ bag: () => fixed(types) }); }
 // Paint rows of ASCII onto the bottom of the board: '#' solid, '.' empty.
 function paint(g, rows) {
   const base = TOTAL - rows.length;
@@ -183,13 +183,35 @@ g.board.cells[(TOTAL - 1) * COLS + 4] = 1;
 check('ghostY rises when a cell is under the stem', g.ghostY() === TOTAL - 3);
 
 // 180 rotation
-for (const t of TYPES) check('kicksFor(' + t + ', 0, 2) is the 180 list (or O)', kicksFor(t, 0, 2).length === (t === 'O' ? 1 : 7));
+for (const t of TYPES) check('kicksFor(' + t + ', 0, 2) is the SRS+ 180 list (or O)', kicksFor(t, 0, 2).length === (t === 'O' ? 1 : 6));
+for (const [f, t] of [[0, 2], [2, 0], [1, 3], [3, 1]]) check('180 table has ' + f + '>' + t, kicksFor('T', f, t).length === 6);
 g = mk(['T']);
 check('T rotate(2) goes to state 2', g.rotate(2) && g.piece.rot === 2);
 check('T rotate(2) again back to 0', g.rotate(2) && g.piece.rot === 0);
 g = mk(['I']);
 g.rotate(1); while (g.move(-1));  // vertical I flush left, box x = -2
 check('vertical I at left wall flips 180 (1 -> 3) using a sideways kick', g.rotate(2) && g.piece.rot === 3 && g.piece.x >= -1);
+// A 180 that needs its later tests must not be graded as a fifth-kick T-spin.
+g = mk(['T']);
+g.piece.rot = 0; g.piece.x = 3; g.piece.y = TOTAL - 2;             // T flat on the floor, rot 0 (pointing up)
+check('T on the floor 180s (0 -> 2) via a kick, kickIndex stays 0', g.rotate(2) && g.piece.rot === 2 && g.kickIndex === 0);
+
+section('Seeded bag and hard-drop trail');
+const a = new Game({ seed: 12345 }), b = new Game({ seed: 12345 }), c = new Game({ seed: 54321 });
+const seq = g => [g.piece.type, ...g.queue].join('');
+check('same seed deals the same pieces: ' + seq(a), seq(a) === seq(b));
+check('different seed deals a different sequence: ' + seq(c), seq(a) !== seq(c));
+a.reset(a.seed);
+check('reset(seed) replays: ' + seq(a), seq(a) === seq(b) && a.seed === 12345);
+a.reset();
+check('reset() draws a fresh seed', a.seed !== 12345);
+check('mulberry32 is deterministic', mulberry32(7)() === mulberry32(7)() && mulberry32(7)() !== mulberry32(8)());
+g = mk(['I']);
+const yTop = g.piece.y;
+g.hardDrop();
+check('hard drop leaves a trail per column, from the start row to the landing row', g.trail && g.trail.cols.length === 4 && g.trail.cols.every(([x, f, t]) => f === yTop + 1 && t === TOTAL - 1));
+g.update(TRAIL_MS + 1);
+check('trail expires after TRAIL_MS', g.trail === null);
 
 // lock progress
 g = mk(['O']);

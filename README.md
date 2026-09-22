@@ -1,7 +1,7 @@
 # Tetris, agent-9
 
 Open `index.html`. No build step, no dependencies. `node test/run.js` runs
-57 checks against the rules with no browser.
+69 checks against the rules with no browser.
 
 ## Layout
 
@@ -11,7 +11,7 @@ to work.
 
 | file            | job                                                        |
 |-----------------|------------------------------------------------------------|
-| `src/pieces.js` | tetromino data, SRS states, kick tables, 7-bag             |
+| `src/pieces.js` | tetromino data, SRS states, kick tables, seeded 7-bag      |
 | `src/board.js`  | the playfield: a flat `Uint8Array`, collision, row clears  |
 | `src/game.js`   | rules: gravity, lock delay, rotation, scoring, hold, pause |
 | `src/render.js` | canvas drawing and the change-only HUD                     |
@@ -43,7 +43,10 @@ box, `(x, y) -> (n-1-y, x)`, with O pinned to its spawn shape. That is what
 SRS defines, so the kick tables line up. The rotation index is the only
 thing that picks a kick row. The kick tables are keyed `"0>1"` and so on and
 written as published (y up); `kicksFor()` flips `dy` at the one place they
-are read.
+are read. 180-degree rotation uses TETR.IO's SRS+ table, six tests per
+transition. The fifth-kick upgrade to a full T-spin is defined for the
+90-degree tables only, so a 180 records kick 0 and leaves grading to the
+corner rule.
 
 **One clock.** `main.js` hands a millisecond delta to `input.update`, then
 `game.update`, then redraws. Gravity, DAS/ARR, lock delay, the line-clear
@@ -88,6 +91,16 @@ field names the clear, e.g. `B2B  TETRIS  COMBO x1  PERFECT CLEAR`.
 Lock out: a piece settles entirely inside the hidden rows. Both set `over`;
 R or Enter restarts.
 
+**Every game is replayable.** The 7-bag is fed by mulberry32 from a seed
+that is shown in the HUD and written to the URL hash, so a reload replays
+the same sequence and the link can be sent to someone. R draws a new seed;
+Shift+R replays the current one. The tests use the same hook to deal fixed
+pieces.
+
+**A hard drop leaves a trail.** For 120 ms a white gradient fades down each
+column the piece fell through, from its topmost cell to where that cell
+landed, so a drop reads as motion rather than a teleport.
+
 **Pause lives in the game, not the loop.** `game.paused` is folded into
 `active()`, which every player action already checks, so a hard drop during
 pause is refused by the same line that refuses it during a line clear.
@@ -105,7 +118,8 @@ Blur and a hidden tab pause and release every held key.
 | space          | hard drop           |
 | C, Shift       | hold                |
 | P, Esc         | pause               |
-| R, Enter       | restart             |
+| R, Enter       | new game            |
+| Shift+R        | replay this seed    |
 
 ## Taken from whom
 
@@ -128,6 +142,13 @@ agent chose and why. What I took, and what I changed:
   property of the game and gates the one-shot actions too.
 - **agent-10**: best score in `localStorage`, written only on game over,
   read in a try/catch because `file://` and private windows can throw.
+- **agent-8**: the SRS+ 180 kick table, replacing my ad hoc list.
+- **agent-6**: a 180 must not claim the fifth-kick T-spin upgrade. My
+  code recorded the kick index for every rotation, so a 180 landing on its
+  fifth test would have been graded a full T-spin. Fixed the same way.
+- **agent-1**: the seeded, replayable bag with the seed in the URL hash and
+  Shift+R to replay.
+- **agent-4**: the hard-drop trail.
 
 Recorded but not taken: agent-3 charges DAS through the clear animation
 explicitly; mine already does, by construction.
@@ -137,8 +158,9 @@ explicitly; mine already does, by construction.
 `node test/run.js` covers the rules: walls, the I kick out of the left
 wall, the 15-reset lock cap, a brute-forced T-spin double (every T
 placement above a canonical slot; exactly one rotation enters it, and it
-scores 1200), 7-bag coverage across four bags, hold once per piece, 180
-kicks, lock progress, pause.
+scores 1200), 7-bag coverage across four bags, hold once per piece, the
+SRS+ 180 table and its T-spin guard, lock progress, pause, seeded replay,
+the trail.
 
 Rendering was checked with headless Chrome screenshots. One thing that cost
 time: under `--virtual-time-budget` Chrome advances timers but not
@@ -150,8 +172,8 @@ again.
 
 ## What does not work
 
-- The 180 rotation kick list is a short ad hoc one (in place, sideways,
-  up), not a published SRS+ table.
+- Shift is also the hold key, so Shift+R holds the piece a frame before
+  restarting. Harmless, since reset clears hold, but visible.
 - There is no gravity cap: past level 15 pieces effectively teleport and
   the game is lock-delay only, as the guideline curve dictates.
 - No touch controls, no sound, no DAS/ARR settings UI.

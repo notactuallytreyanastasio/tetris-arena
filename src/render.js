@@ -6,7 +6,7 @@
 
   const { COLS, ROWS, HIDDEN } = root.BoardModule;
   const { PIECES, COLORS } = root.Pieces;
-  const { CLEAR_ANIM_MS, QUEUE_LEN } = root.GameModule;
+  const { CLEAR_ANIM_MS, TRAIL_MS, QUEUE_LEN } = root.GameModule;
 
   const CELL = 30;         // CSS pixels on the field
   const MINI = 18;         // CSS pixels in the next/hold panels
@@ -84,7 +84,7 @@
       this.els = els;
       // Last values written to the DOM; textContent only changes when a
       // value does (taken from agent-3).
-      this.shown = { score: -1, level: -1, lines: -1, best: -1, toast: '', overlay: '' };
+      this.shown = { score: -1, level: -1, lines: -1, best: -1, seed: -1, toast: '', overlay: '' };
     }
 
     draw(game, bestScore) {
@@ -107,6 +107,7 @@
       const els = this.els, shown = this.shown;
       if (shown.score !== game.score) els.score.textContent = shown.score = game.score;
       if (shown.best !== bestScore) els.best.textContent = shown.best = bestScore;
+      if (shown.seed !== game.seed) els.seed.textContent = shown.seed = game.seed;
       if (shown.level !== game.level) els.level.textContent = shown.level = game.level;
       if (shown.lines !== game.lines) els.lines.textContent = shown.lines = game.lines;
 
@@ -123,7 +124,7 @@
         els.overlay.classList.toggle('hidden', !overlay);
         if (overlay === 'over') {
           els.overlayTitle.textContent = 'Game over';
-          els.overlayHint.textContent = 'press R to restart';
+          els.overlayHint.textContent = 'R for a new game, Shift+R to replay this seed';
         } else if (overlay === 'paused') {
           els.overlayTitle.textContent = 'Paused';
           els.overlayHint.textContent = 'press P to resume';
@@ -160,6 +161,21 @@
         ctx.fillStyle = 'rgba(255,255,255,' + (0.9 * k).toFixed(3) + ')';
         for (const y of game.clearing.rows) {
           if (y >= HIDDEN) ctx.fillRect(0, (y - HIDDEN) * CELL, COLS * CELL, CELL);
+        }
+      }
+
+      // hard-drop trail: a fading streak down each column the piece fell
+      // through (taken from agent-4)
+      if (game.trail) {
+        const life = 1 - game.trail.t / TRAIL_MS;
+        for (const [x, fromY, toY] of game.trail.cols) {
+          const y0 = Math.max(fromY - HIDDEN, 0), y1 = toY - HIDDEN;
+          if (y1 <= y0) continue;
+          const grad = ctx.createLinearGradient(0, y0 * CELL, 0, y1 * CELL);
+          grad.addColorStop(0, 'rgba(255,255,255,0)');
+          grad.addColorStop(1, 'rgba(255,255,255,' + (0.35 * life).toFixed(3) + ')');
+          ctx.fillStyle = grad;
+          ctx.fillRect(x * CELL + 4, y0 * CELL, CELL - 8, (y1 - y0) * CELL);
         }
       }
 

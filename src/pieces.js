@@ -68,15 +68,34 @@
     '0>3': [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
   };
 
-  // 180-degree rotation is not in the guideline; this is the small list
-  // most modern clients use (in place, then a cell sideways, then up).
-  const KICKS_180 = [[0, 0], [1, 0], [-1, 0], [0, 1], [1, 1], [-1, 1], [0, 2]];
+  // 180-degree rotation is not in the guideline. This is TETR.IO's SRS+
+  // table (taken from agent-8): six tests per transition, the same for
+  // every piece, y up like the tables above.
+  const KICKS_180 = {
+    '0>2': [[0, 0], [0, 1], [1, 1], [-1, 1], [1, 0], [-1, 0]],
+    '2>0': [[0, 0], [0, -1], [-1, -1], [1, -1], [-1, 0], [1, 0]],
+    '1>3': [[0, 0], [1, 0], [1, 2], [1, 1], [0, 2], [0, 1]],
+    '3>1': [[0, 0], [-1, 0], [-1, 2], [-1, 1], [0, 2], [0, 1]],
+  };
 
   function kicksFor(type, from, to) {
     if (type === 'O') return [[0, 0]];
-    const table = (to - from + 4) % 4 === 2 ? null : type === 'I' ? KICKS_I : KICKS_JLSTZ;
-    const list = table ? table[from + '>' + to] : KICKS_180;
-    return list.map(([dx, dy]) => [dx, -dy]);
+    const key = from + '>' + to;
+    const table = (to - from + 4) % 4 === 2 ? KICKS_180 : type === 'I' ? KICKS_I : KICKS_JLSTZ;
+    return table[key].map(([dx, dy]) => [dx, -dy]);
+  }
+
+  // Seeded PRNG (mulberry32, taken from agent-1) so a game is replayable:
+  // the same seed deals the same bags.
+  function mulberry32(seed) {
+    let a = seed >>> 0;
+    return () => {
+      a = (a + 0x6D2B79F5) >>> 0;
+      let t = a;
+      t = Math.imul(t ^ (t >>> 15), t | 1);
+      t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
   }
 
   // 7-bag randomizer: every run of seven contains each tetromino exactly
@@ -98,5 +117,5 @@
     };
   }
 
-  root.Pieces = { TYPES, PIECES, COLORS, kicksFor, Bag };
+  root.Pieces = { TYPES, PIECES, COLORS, kicksFor, Bag, mulberry32 };
 })(typeof module !== 'undefined' ? module.exports : window);

@@ -15,6 +15,7 @@
   const LINES_PER_LEVEL = 10;
   const TOAST_MS = 1400;
   const QUEUE_LEN = 5;
+  const TRAIL_MS = 120;        // hard-drop streak lifetime
 
   // Guideline scoring, all multiplied by level.
   const SCORE = {
@@ -39,14 +40,21 @@
   }
 
   class Game {
+    // opts.seed replays a bag sequence; opts.bag (seed -> bag) swaps the
+    // randomizer entirely, which the tests use to deal fixed pieces.
     constructor(opts) {
       opts = opts || {};
       this.board = new B.Board();
-      this.bag = P.Bag(opts.random);
-      this.reset();
+      this.makeBag = opts.bag || (seed => P.Bag(P.mulberry32(seed)));
+      this.reset(opts.seed);
     }
 
-    reset() {
+    // New game. `seed` replays a specific bag sequence; omitted, a fresh
+    // seed is drawn and exposed as this.seed for the HUD and URL.
+    reset(seed) {
+      if (seed === undefined) seed = (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
+      this.seed = seed >>> 0;
+      this.bag = this.makeBag(this.seed);
       this.board.reset();
       this.piece = null;        // { type, rot, x, y }
       this.score = 0;
@@ -58,6 +66,7 @@
       this.combo = -1;          // consecutive line-clearing locks; -1 = none
       this.b2b = false;         // last clear was a tetris or T-spin
       this.toast = null;        // { text, t } naming the last clear
+      this.trail = null;        // { cols: [[x, fromY, toY]], t } after a hard drop
       this.gravityAcc = 0;
       this.lockTimer = 0;
       this.lockResets = 0;
@@ -179,7 +188,9 @@
           p.y = ny;
           p.rot = to;
           this.spun = true;
-          this.kickIndex = i;
+          // The fifth-kick T-spin upgrade is defined for the 90-degree
+          // tables; a 180 leaves grading to the corner rule (agent-6).
+          this.kickIndex = dir === 2 ? 0 : i;
           this.touched();
           return true;
         }
@@ -212,8 +223,19 @@
     hardDrop() {
       if (!this.active()) return 0;
       const rows = this.ghostY() - this.piece.y;
+      if (rows > 0) {
+        // One streak per column, from the piece's topmost cell there down
+        // to where that cell lands.
+        const top = {};
+        for (const [dx, dy] of this.shape()) {
+          const x = this.piece.x + dx;
+          if (top[x] === undefined || dy < top[x]) top[x] = dy;
+        }
+        const cols = Object.keys(top).map(x => [Number(x), this.piece.y + top[x], this.piece.y + rows + top[x]]);
+        this.trail = { cols, t: 0 };
+        this.spun = false;
+      }
       this.piece.y += rows;
-      if (rows > 0) this.spun = false;
       this.score += rows * SCORE.hardDrop;
       this.lockPiece();   // replaces this.piece with the next spawn
       return rows;
@@ -347,6 +369,10 @@
         this.toast.t += dt;
         if (this.toast.t >= TOAST_MS) this.toast = null;
       }
+      if (this.trail) {
+        this.trail.t += dt;
+        if (this.trail.t >= TRAIL_MS) this.trail = null;
+      }
       if (this.over || this.paused) return;
 
       if (this.clearing) {
@@ -379,6 +405,6 @@
 
   root.GameModule = {
     Game, gravityMsForLevel, SCORE,
-    LOCK_DELAY_MS, LOCK_RESET_CAP, CLEAR_ANIM_MS, TOAST_MS, LINES_PER_LEVEL, QUEUE_LEN,
+    LOCK_DELAY_MS, LOCK_RESET_CAP, CLEAR_ANIM_MS, TOAST_MS, TRAIL_MS, LINES_PER_LEVEL, QUEUE_LEN,
   };
 })(typeof module !== 'undefined' ? module.exports : window);
