@@ -90,14 +90,47 @@ const Render = (() => {
         }
       }
     }
+
+    toasts(ctx, game);
+  }
+
+  // Scoring toasts float up from the middle of the board and fade.
+  function toasts(ctx, game) {
+    if (!game.toasts.length) return;
+    const W = Board.W * CELL, H = (Board.H - Board.HIDDEN) * CELL;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = 'bold 18px ui-monospace, "SF Mono", Menlo, Consolas, monospace';
+    game.toasts.forEach((t, i) => {
+      const k = t.t / TOAST_MS;
+      ctx.globalAlpha = k < 0.7 ? 1 : 1 - (k - 0.7) / 0.3;
+      const y = H * 0.4 - k * 30 - i * 24;
+      ctx.fillStyle = 'rgba(0,0,0,0.6)';
+      ctx.fillText(t.text, W / 2 + 1, y + 1);
+      ctx.fillStyle = '#f3d33a';
+      ctx.fillText(t.text, W / 2, y);
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  // Size a canvas's backing store by devicePixelRatio so cell edges are
+  // crisp on high-density screens; drawing code keeps using CSS pixels.
+  function fit(canvas, cssW, cssH) {
+    const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+    canvas.width = Math.round(cssW * dpr);
+    canvas.height = Math.round(cssH * dpr);
+    canvas.style.width = cssW + 'px';
+    canvas.style.height = cssH + 'px';
+    canvas.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
   // Draw a list of piece types stacked in slots on a preview canvas, each
   // centred in its slot. `types` may contain null for an empty slot.
   function preview(ctx, types, slotH, size, dim = false) {
-    const W = ctx.canvas.width;
+    const W = parseInt(ctx.canvas.style.width, 10) || ctx.canvas.width;
+    const H = parseInt(ctx.canvas.style.height, 10) || ctx.canvas.height;
     ctx.fillStyle = BG;
-    ctx.fillRect(0, 0, W, ctx.canvas.height);
+    ctx.fillRect(0, 0, W, H);
     ctx.globalAlpha = dim ? 0.3 : 1;
     types.forEach((type, slot) => {
       if (!type) return;
@@ -115,5 +148,5 @@ const Render = (() => {
     ctx.globalAlpha = 1;
   }
 
-  return { CELL, board, cell, preview };
+  return { CELL, board, cell, preview, toasts, fit };
 })();

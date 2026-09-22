@@ -6,9 +6,28 @@
   const game = new Game(Number.isFinite(hashSeed) ? hashSeed : undefined);
   const input = new Input(game);
   input.attach(window);
-  const boardCtx = document.getElementById('board').getContext('2d');
-  const holdCtx = document.getElementById('hold').getContext('2d');
-  const nextCtx = document.getElementById('next').getContext('2d');
+  const boardCanvas = document.getElementById('board');
+  const holdCanvas = document.getElementById('hold');
+  const nextCanvas = document.getElementById('next');
+  Render.fit(boardCanvas, Board.W * Render.CELL, (Board.H - Board.HIDDEN) * Render.CELL);
+  Render.fit(holdCanvas, 120, 120);
+  Render.fit(nextCanvas, 120, 360);
+  const boardCtx = boardCanvas.getContext('2d');
+  const holdCtx = holdCanvas.getContext('2d');
+  const nextCtx = nextCanvas.getContext('2d');
+
+  // Best score lives in localStorage, written when a piece locks or the game
+  // ends, never per frame. Storage may be unavailable (private mode, file://).
+  const BEST_KEY = 'tetris-agent-7-best';
+  try { game.best = Number(localStorage.getItem(BEST_KEY)) || 0; } catch (e) { game.best = 0; }
+  let savedBest = game.best;
+  function saveBest() {
+    if (game.best <= savedBest) return;
+    savedBest = game.best;
+    try { localStorage.setItem(BEST_KEY, String(game.best)); } catch (e) { /* no storage */ }
+  }
+  window.addEventListener('beforeunload', saveBest);
+  let shownLocks = 0, shownOver = false;
   const holdBox = document.getElementById('hold-box');
   const seedEl = document.getElementById('seed');
   const overlay = document.getElementById('overlay');
@@ -19,7 +38,7 @@
   // HUD text is written only when it changes: DOM writes every frame cost
   // layout even when the text is the same.
   const hud = {};
-  for (const id of ['score', 'level', 'lines']) hud[id] = { el: document.getElementById(id), value: null };
+  for (const id of ['score', 'level', 'lines', 'best']) hud[id] = { el: document.getElementById(id), value: null };
   function setText(slot, value) {
     if (slot.value === value) return;
     slot.value = value;
@@ -45,11 +64,14 @@
     if (game.seed !== shownSeed) {
       shownSeed = game.seed;
       seedEl.textContent = game.seed;
-      history.replaceState(null, '', '#' + game.seed);
+      // replaceState can throw on file:// in some browsers (agent-1).
+      try { history.replaceState(null, '', '#' + game.seed); } catch (e) { /* no address to share */ }
     }
     setText(hud.score, game.score);
     setText(hud.level, game.level);
     setText(hud.lines, game.lines);
+    setText(hud.best, game.best);
+    if (game.locks !== shownLocks || game.over !== shownOver) { shownLocks = game.locks; shownOver = game.over; saveBest(); }
     if (game.lastClear !== shownClear) {
       shownClear = game.lastClear;
       clearEl.textContent = shownClear ? `${shownClear.label} +${shownClear.points}` : '';

@@ -71,12 +71,20 @@ const PIECES = (() => {
     '3>0': [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
     '0>3': [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
   };
-  const KICKS_O = { '0>1': [[0, 0]], '1>0': [[0, 0]], '1>2': [[0, 0]], '2>1': [[0, 0]],
-                    '2>3': [[0, 0]], '3>2': [[0, 0]], '3>0': [[0, 0]], '0>3': [[0, 0]] };
+  // 180-degree kicks. Guideline SRS has no 180; this is TETR.IO's SRS+ table,
+  // six tests, the same for every piece (from agent-8; agent-6 and agent-9
+  // carry the same numbers). Flipped to y-down like the tables above.
+  const KICKS_180 = {
+    '0>2': [[0, 0], [0, -1], [1, -1], [-1, -1], [1, 0], [-1, 0]],
+    '2>0': [[0, 0], [0, 1], [-1, 1], [1, 1], [-1, 0], [1, 0]],
+    '1>3': [[0, 0], [1, 0], [1, -2], [1, -1], [0, -2], [0, -1]],
+    '3>1': [[0, 0], [-1, 0], [-1, -2], [-1, -1], [0, -2], [0, -1]],
+  };
 
   function kicks(type, from, to) {
-    const table = type === 'I' ? KICKS_I : type === 'O' ? KICKS_O : KICKS_JLSTZ;
-    return table[`${from}>${to}`];
+    if (type === 'O') return [[0, 0]];
+    if ((to - from + 4) % 4 === 2) return KICKS_180[`${from}>${to}`];
+    return (type === 'I' ? KICKS_I : KICKS_JLSTZ)[`${from}>${to}`];
   }
 
   return {

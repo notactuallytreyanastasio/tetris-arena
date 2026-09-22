@@ -158,6 +158,26 @@ inp.attach(fakeWin, fakeDoc); listeners.keydown(key('ArrowLeft')); listeners.blu
 ok(g.paused && inp.dasDir === 0, 'window blur pauses and drops held keys');
 g.setPaused(false); fakeDoc.hidden = true; listeners['doc:visibilitychange'](); ok(g.paused, 'hiding the tab pauses');
 
+// ---- 180 rotation ----
+ok(PIECES.kicks('T', 0, 2).length === 6 && PIECES.kicks('I', 1, 3).length === 6 && PIECES.kicks('O', 0, 2).length === 1, '180 table has six tests, O has one');
+g = withQueue(['L', 'L']); ok(g.rotate(2) && g.active.rot === 2 && g.active.kick === 0, 'A turns a piece 180 in the open');
+g = withQueue(['T', 'T']); g.rotate(1); while (g.move(1)) {} const rx = g.active.x;
+ok(g.rotate(2) && g.active.rot === 3 && g.cells().every(([dx]) => g.active.x + dx < 10), 'T 180 at the right wall stays in bounds via the 180 kicks');
+// a 180 never claims the fifth-kick T-spin upgrade
+g = withQueue(['T', 'O']);
+g.board.grid[B - 3] = ['Z', 'Z', 0, 'Z', 0, 0, 0, 0, 0, 0];
+g.board.grid[B - 2] = ['Z', 0, 0, 0, 'Z', 'Z', 'Z', 'Z', 'Z', 'Z'];
+g.board.grid[B - 1] = ['Z', 'Z', 0, 0, 'Z', 'Z', 'Z', 'Z', 'Z', 'Z'];
+Object.assign(g.active, { rot: 0, x: 1, y: B - 3, spin: false, kick: -1 });
+ok(g.rotate(2) && g.active.rot === 2 && g.active.kick === 0 && g.tspinKind() === 'mini', 'a 180 into a mini slot stays mini even though it kicked');
+
+// ---- toasts and best ----
+g = withQueue(['I', 'I', 'I']); stack(g, 1, 9); g.rotate(1); while (g.move(1)) {} g.hardDrop();
+ok(g.toasts.length === 1 && g.toasts[0].text === 'SINGLE +100', 'a clear posts a toast');
+g.update(500); ok(g.toasts.length === 1, 'toast alive at 500ms'); g.update(500); ok(g.toasts.length === 0, 'toast gone by 1000ms');
+ok(g.locks === 1 && g.best === g.score && g.score > 0, 'locks counted and best tracks score');
+g.reset(5); ok(g.best > 0 && g.score === 0, 'best survives reset');
+
 // ---- random play ----
 g = new Game(3); g.level = 8; let frames = 0;
 for (let i = 0; i < 120 * 60 && !g.over; i++) {

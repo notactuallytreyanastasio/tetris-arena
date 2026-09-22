@@ -85,6 +85,7 @@ class Input {
       case 'KeyP': case 'Escape': this.togglePause(); break;
       case 'ArrowUp': case 'KeyX': g.rotate(1); break;
       case 'KeyZ': g.rotate(-1); break;
+      case 'KeyA': g.rotate(2); break;
       case 'Space': g.hardDrop(); break;
       case 'KeyC': case 'ShiftLeft': case 'ShiftRight': g.holdPiece(); break;
       case 'KeyR': g.reset(e.shiftKey ? g.seed : undefined); break;   // Shift+R replays the same seed
@@ -104,7 +105,7 @@ class Input {
   }
 
   handles(code) {
-    return ['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'KeyX', 'KeyZ', 'Space', 'KeyR', 'KeyC', 'ShiftLeft', 'ShiftRight', 'KeyP', 'Escape'].includes(code);
+    return ['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'KeyX', 'KeyZ', 'KeyA', 'Space', 'KeyR', 'KeyC', 'ShiftLeft', 'ShiftRight', 'KeyP', 'Escape'].includes(code);
   }
 }
 

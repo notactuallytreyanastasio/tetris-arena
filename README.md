@@ -1,6 +1,6 @@
 # Tetris, agent-7
 
-Open `index.html`. Run `node test.js` for 77 headless checks against the same
+Open `index.html`. Run `node test.js` for 86 headless checks against the same
 files the browser loads.
 
     index.html   layout and key legend
@@ -30,7 +30,8 @@ offset data; here all four O states are pinned to the spawn state.
 **Kicks** are the published JLSTZ and I tables, stored already flipped to
 y-down. Rotation tries the base position then four kick offsets in order and
 records which one succeeded, because "landed on the fifth test" is part of
-the T-spin rule.
+the T-spin rule. A is a 180 using TETR.IO's SRS+ six-test table; a 180
+records kick 0, so it never claims the fifth-kick T-spin upgrade.
 
 **Board** is 24 rows of 10 with the top four hidden. Rows are arrays and
 cells hold the piece letter, so the renderer looks colours up in one table
@@ -83,6 +84,18 @@ the same sequence twice.
 columns it fell through for 120ms. At speed a hard drop otherwise teleports
 the piece and the eye loses where it came from. The trail is game state with
 its own clock, so it advances through the flash and is testable in node.
+agent-4 shipped the same idea in the same window; neither of us read the
+other's first, and the graph shows both.
+
+**Scoring toasts** float up the board and fade over 900ms, because the eye
+is on the board when a clear happens, not on the side panel. The `Last` box
+keeps the record.
+
+**Best score** is kept in localStorage, written when a piece locks or the
+game ends, never per frame, and ignored when storage is unavailable.
+
+**Canvases** size their backing store by `devicePixelRatio`, so cell edges
+are crisp on high-density screens while drawing code stays in CSS pixels.
 
 Also: five-piece preview, hold once per piece with the panel dimming while
 spent, outline ghost, a lock pulse that whitens the grounded piece as its
@@ -117,15 +130,25 @@ the list, with what changed.
 - **agent-2 and agent-8**: pause on blur and visibilitychange with held keys
   released first.
 - **agent-2, 4, 6, 8**: shipping the node tests in the worktree.
+- **agent-1**, round 2: DPR-scaled canvas backing store; the note that
+  `history.replaceState` can throw on `file://`.
+- **agent-4**, round 2: on-board scoring toasts.
+- **agent-9 via agent-5**, round 2: best score in localStorage, written on
+  lock and game over rather than per frame.
+- **agent-8**, round 2: the SRS+ 180 table, with **agent-6**'s rule that a
+  180 never claims the fifth-kick T-spin upgrade. Rejected at M4 as
+  unverifiable against the SRS spec; adopted once agent-6 and agent-9 carried
+  the same numbers and they matched the TETR.IO table as I know it.
 
-New here, as far as I can see in the other worktrees: the hard-drop trail,
-the soft-drop floor, and generating rotation states from one matrix per
-piece (agent-1 and agent-9 also generate; the O pin is the part to check).
+New here, as far as I can see in the other worktrees: the soft-drop floor,
+and generating rotation states from one matrix per piece (agent-1 and
+agent-9 also generate; the O pin is the part to check). An earlier version
+of this file claimed the hard-drop trail too; that was wrong, see above.
 
 ## What does not work
 
-- No 180 rotation. Its kick table is not SRS and would be the one part of
-  the rotation code I could not check against the published tables.
+- The 180 kick table is SRS+, not guideline SRS, so its only check is
+  agreement between three copies and memory of the TETR.IO table.
 - The T-spin mini test classifies a placed piece rather than reaching the
   position by play; no straight-descent-plus-one-rotation entry exists for
   that shape, minis come from kick chains.

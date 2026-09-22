@@ -7,6 +7,7 @@ const LOCK_RESETS = 15;   // move/rotate resets allowed per lowest row reached
 const SOFT_DROP_MS = 40;  // ms per row while soft dropping (floor; never slower than gravity)
 const CLEAR_FLASH = 150;  // ms full rows stay lit before they collapse
 const TRAIL_MS = 120;     // ms the hard-drop trail lingers
+const TOAST_MS = 900;     // ms a scoring label floats over the board
 const QUEUE_DEPTH = 5;    // a 7-bag makes about five pieces plannable
 const LINES_PER_LEVEL = 10;
 
@@ -56,6 +57,9 @@ class Game {
     this.combo = -1;          // consecutive line-clearing locks; -1 = none yet
     this.b2b = false;         // last clear was a tetris or T-spin
     this.lastClear = null;    // { label, points } of the latest scoring lock
+    this.toasts = [];         // [{ text, t }] scoring labels drawn on the board
+    this.locks = 0;           // pieces locked this game; main.js saves the best score when it changes
+    this.best = this.best || 0; // best score, loaded by main.js from storage
     this.clearing = null;     // { rows, t } while full rows flash
     this.gravityAcc = 0;      // ms since the last gravity step
     this.softAcc = 0;         // ms since the last soft-drop step
@@ -164,8 +168,8 @@ class Game {
     return true;
   }
 
-  // dir = +1 clockwise, -1 counter-clockwise. Try the base position and
-  // then each SRS kick offset in order; the first that fits wins.
+  // dir = +1 clockwise, -1 counter-clockwise, 2 for a 180. Try the base
+  // position and then each kick offset in order; the first that fits wins.
   rotate(dir) {
     if (!this.accepting) return false;
     const p = this.active;
@@ -175,7 +179,9 @@ class Game {
       const [kx, ky] = kicks[i];
       if (this.fits(p, kx, ky, to)) {
         p.x += kx; p.y += ky; p.rot = to;
-        p.spin = true; p.kick = i;
+        // The fifth-kick T-spin upgrade belongs to the 90-degree tables; a
+        // 180 leaves the full/mini call to the corner rule alone (agent-6).
+        p.spin = true; p.kick = dir === 2 ? 0 : i;
         this.noteMoved();
         return true;
       }
@@ -233,12 +239,15 @@ class Game {
     if (this.cells(p).every(([, dy]) => p.y + dy < Board.HIDDEN)) {
       this.over = true;
       this.active = null;
+      this.locks += 1;
       return;
     }
     const rows = this.board.fullRows();
     this.scoreLock(rows.length, spin);
     this.active = null;
     this.holdUsed = false;
+    this.locks += 1;
+    if (this.score > this.best) this.best = this.score;
     if (rows.length) {
       this.clearing = { rows, t: 0 };   // update() collapses after the flash
     } else {
@@ -270,10 +279,13 @@ class Game {
     if (points > 0) {
       this.score += points;
       this.lastClear = { label: label.trim(), points };
+      this.toast(`${label.trim()} +${points}`);
     }
     this.lines += n;
     this.level = 1 + Math.floor(this.lines / LINES_PER_LEVEL);
   }
+
+  toast(text) { this.toasts.push({ text, t: 0 }); }
 
   finishClear() {
     const n = this.clearing.rows.length;
@@ -283,6 +295,8 @@ class Game {
       const bonus = SCORE.perfect[n] * this.level;
       this.score += bonus;
       this.lastClear = { label: 'PERFECT CLEAR', points: bonus };
+      this.toast(`PERFECT CLEAR +${bonus}`);
+      if (this.score > this.best) this.best = this.score;
     }
     this.spawn();
   }
@@ -294,6 +308,8 @@ class Game {
       this.dropTrail.t += dt;
       if (this.dropTrail.t >= TRAIL_MS) this.dropTrail = null;
     }
+    for (const t of this.toasts) t.t += dt;
+    this.toasts = this.toasts.filter(t => t.t < TOAST_MS);
 
     if (this.clearing) {
       this.clearing.t += dt;
