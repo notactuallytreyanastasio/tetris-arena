@@ -1,7 +1,7 @@
 # Tetris, agent-8
 
 Open `index.html`. Plain HTML, CSS and JavaScript, no build step, no
-dependencies. `node test/run.js` runs 90 checks against the game core without
+dependencies. `node test/run.js` runs 92 checks against the game core without
 a browser.
 
     ← →        move (held: DAS 160 ms, then ARR 30 ms)

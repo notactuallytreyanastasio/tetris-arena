@@ -16,6 +16,13 @@ module.exports = (t) => {
   inp.onKeyDown(key('KeyR', true)); t.check(g.seed === 7, 'Shift+R keeps the seed');
   inp.onKeyDown(key('KeyR', false)); t.check(g.seed !== 7, 'R takes a new seed');
 
+  // A vertical I flush against the left wall (rot 1 at x=-2 puts its column
+  // at board x=0). Rot 3 would be column -1, so the 180 must take kick
+  // test 2, (1, 0). Case from agent-2, who first wrote it the wrong way round.
+  g = new Game(5); t.force(g, 'I'); g.rotate(1); while (g.move(-1)) {}
+  t.check(g.active.x === -2, 'vertical I reaches column 0 at box x=-2');
+  t.check(g.rotate(2) && g.active.rot === 3 && g.active.x === -1 && g.active.kick === 1, 'I 180 at the left wall kicks right via test 2');
+
   g = new Game(1); t.force(g, 'O'); const fromY = g.active.y; g.hardDrop();
   t.check(g.trail && g.trail.cols.length === 2 && g.trail.cols[0][1] === fromY && g.trail.cols[0][2] === ROWS - 2, 'hard drop leaves a two-column trail from spawn row to floor');
   g.update(TRAIL_MS - 10); t.check(g.trail !== null, 'trail alive just before ' + TRAIL_MS + 'ms');

@@ -62,7 +62,7 @@ html, body {
 }
 
 .panel {
-  width: 160px;
+  width: 200px; /* wide enough that no legend entry wraps mid-entry (agent-6, agent-10) */
   display: flex;
   flex-direction: column;
   gap: 12px;
