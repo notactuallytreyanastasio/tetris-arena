@@ -24,10 +24,15 @@ place it is used. `test/m2.js` proves the signs are right by building a
 T-spin-double slot, resting a T beside the overhang, rotating it, and checking
 it landed via kick test 3 (left one, down one) and filled both rows.
 
-**The board is one `Uint8Array`, 10 x 22.** Two hidden rows above the visible
-twenty let pieces spawn at guideline height. Collision is an index calculation.
-Line clear is `copyWithin` plus a `fill`, no allocation. Cell values are piece
-ids, which are also the colour indices.
+**The board is one `Uint8Array`, 10 x 24, and the ceiling is solid.** Four
+hidden rows above the visible twenty: pieces spawn in the lower two, and the
+upper two exist because an SRS kick can lift a piece two rows. With that room,
+`fits()` can refuse any cell at y < 0 outright, and `lockPiece()` throws if it
+is ever asked to write above the board. The first version had two hidden rows
+and skipped such cells quietly, which would have lost a cell on a ceiling
+kick. Collision is an index calculation. Line clear is `copyWithin` plus a
+`fill`, no allocation. Cell values are piece ids, which are also the colour
+indices.
 
 **One clock.** A `requestAnimationFrame` loop hands a millisecond delta to
 `update()`. Gravity, DAS/ARR, lock delay and the line-clear flash are all
@@ -58,6 +63,16 @@ times per lowest row reached, so a piece cannot be stalled forever.
 **The ghost is an outline.** A translucent copy blends into a busy stack. A 2px
 stroke in the piece colour leaves the interior black and reads as "where the
 edges will go".
+
+**Held directions are a stack.** Press left while holding right and left
+takes over; release left and right resumes, already charged, so it moves on
+the next repeat tick instead of waiting a fresh DAS. DAS also keeps charging
+through the line-clear flash.
+
+**Feedback on the board.** Each lock that scores puts one label on the board
+(`B2B T-SPIN DOUBLE +1800`, then `COMBO x2` on its own line) that rises and
+fades over 900ms. A hard drop leaves a streak per column for 120ms. The best
+score persists in `localStorage`.
 
 ## Controls
 
@@ -92,10 +107,20 @@ first minute, so the interesting differences were smaller.
   during the line-clear flash, so a held direction hitched for a full DAS on
   the next piece. Taken; the charge is capped at one DAS so the new piece
   gets a single shift on its first frame rather than a burst of repeats.
-- **agent-1**: a 40-row board so no cell can ever be above the array and
-  collision needs no negative-y guard. Read, not taken: the guard here is one
-  line, and a 20-row render offset in every draw call costs more than it
-  saves.
+- **agent-8** (after agent-3 and agent-9): four hidden rows so a kick that
+  lifts a piece two rows always has room. Taken, and the ceiling made solid
+  so nothing can ever be clipped; this replaced the earlier two-row board and
+  its silent `y >= 0` guard.
+- **agent-1**: the held-direction stack, with agent-7's point that the older
+  key resumes already charged. Taken; the resumed key waits one ARR tick.
+  Agent-1's 40-row board was read and not taken: the four-row buffer with a
+  solid ceiling gets the same guarantee with a smaller offset.
+- **agent-3**: try one row higher before block-out when the spawn cell is
+  blocked. Taken.
+- **agent-4**: on-board scoring toasts and the hard-drop trail (agent-7 has
+  the trail too). Taken; the label text is composed in `award()`.
+- **agent-9**: best score in `localStorage`. Taken; written on lock, game
+  over and unload rather than every frame.
 - **agent-7**: soft drop as a fixed ms-per-row with a floor at gravity, with
   the point that a fixed rate can otherwise be slower than gravity at high
   levels. Read, not taken: this game divides gravity by 20, which cannot be
@@ -111,3 +136,5 @@ first minute, so the interesting differences were smaller.
   level cap or victory condition, the game simply gets as fast as level 20.
 - `test/harness.js` stubs the DOM, so rendering is verified only by
   screenshot, not by the probes.
+- Toasts and the drop trail are drawn on the board canvas, so a screen
+  reader gets nothing from them; the HUD numbers are the accessible record.
