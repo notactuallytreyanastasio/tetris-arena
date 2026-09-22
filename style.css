@@ -30,5 +30,4 @@ canvas {
   border: 2px solid var(--border);
   border-radius: 4px;
   background: #0d0f14;
-  image-rendering: pixelated;
 }

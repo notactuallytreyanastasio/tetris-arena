@@ -4,6 +4,11 @@
 // game behaves the same at 30, 60 or 144 fps.
 
 const LOCK_DELAY_MS = 500;
+// Guideline "move reset": a move or rotate while resting restarts the lock
+// delay, but only this many times, so a piece cannot be kept alive forever.
+const MAX_LOCK_RESETS = 15;
+// Soft drop is 20x gravity, but never slower than the level's gravity.
+const SOFT_DROP_FACTOR = 20;
 
 // Guideline gravity: seconds per row = (0.8 - (level-1)*0.007)^(level-1).
 function gravityMs(level) {
@@ -34,8 +39,11 @@ class Game {
     this.score = 0;
     this.lines = 0;
     this.over = false;
+    this.softDropping = false;
     this.gravityAcc = 0;
     this.lockAcc = 0;
+    this.lockResets = 0;
+    this.lowestY = 0;
     this.spawn();
   }
 
@@ -47,13 +55,15 @@ class Game {
   // Spawn horizontally centred with the piece's lowest row on the first
   // visible row, so it appears the instant it exists instead of sitting in
   // the hidden rows for a full gravity interval. If it does not fit, the
-  // stack has reached the top and the game is over.
+  // stack has reached the top and the game is over (block out).
   spawn() {
     const type = this.nextType();
     const size = PIECES[type].size;
     this.piece = { type, rot: 0, x: Math.floor((COLS - size) / 2), y: HIDDEN_ROWS - 1 };
     this.gravityAcc = 0;
     this.lockAcc = 0;
+    this.lockResets = 0;
+    this.lowestY = this.piece.y;
     if (!fits(this.board, this.piece)) {
       this.over = true;
       this.piece = null;
@@ -72,8 +82,51 @@ class Game {
     return !fits(this.board, { ...this.piece, y: this.piece.y + 1 });
   }
 
+  // A successful player move while resting earns another lock delay, up to
+  // the cap. Falling to a new lowest row replenishes the cap, which is what
+  // lets a piece slide under an overhang without locking early.
+  playerMoved() {
+    if (this.piece.y > this.lowestY) {
+      this.lowestY = this.piece.y;
+      this.lockResets = 0;
+    }
+    if (this.grounded() && this.lockResets < MAX_LOCK_RESETS) {
+      this.lockAcc = 0;
+      this.lockResets++;
+    }
+  }
+
+  move(dx) {
+    if (!this.piece || this.over) return false;
+    const ok = this.tryMove(dx, 0);
+    if (ok) this.playerMoved();
+    return ok;
+  }
+
+  // dir = +1 clockwise, -1 counter-clockwise. No wall kicks yet.
+  rotate(dir) {
+    if (!this.piece || this.over) return false;
+    const ok = this.tryMove(0, 0, dir);
+    if (ok) this.playerMoved();
+    return ok;
+  }
+
+  hardDrop() {
+    if (!this.piece || this.over) return;
+    while (this.tryMove(0, 1)) { /* fall */ }
+    this.lock();
+  }
+
+  // Lock out (from agent-1): a piece that settles entirely inside the hidden
+  // rows never becomes visible, and the guideline calls that game over too.
   lock() {
+    const cells = pieceCells(this.piece);
     lockPiece(this.board, this.piece);
+    if (cells.every(([, y]) => y < HIDDEN_ROWS)) {
+      this.over = true;
+      this.piece = null;
+      return;
+    }
     const cleared = clearLines(this.board);
     this.lines += cleared;
     this.spawn();
@@ -83,10 +136,14 @@ class Game {
     if (this.over || !this.piece) return;
 
     this.gravityAcc += dt;
-    const interval = gravityMs(this.level);
+    const base = gravityMs(this.level);
+    const interval = this.softDropping ? Math.min(base, base / SOFT_DROP_FACTOR) : base;
     while (this.gravityAcc >= interval) {
       this.gravityAcc -= interval;
-      this.tryMove(0, 1);
+      if (this.tryMove(0, 1) && this.piece.y > this.lowestY) {
+        this.lowestY = this.piece.y;
+        this.lockResets = 0;
+      }
     }
 
     // Lock delay: once the piece is resting, give it a moment before it

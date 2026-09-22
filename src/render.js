@@ -3,10 +3,22 @@
 
 const CELL = 30;
 
-function makeRenderer(canvas) {
+// Backing store scaled by devicePixelRatio so cell edges are crisp on
+// retina screens (taken from agent-1). Everything below draws in CSS pixels.
+function fitCanvas(canvas, cssW, cssH) {
+  const dpr = window.devicePixelRatio || 1;
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  canvas.style.width = cssW + 'px';
+  canvas.style.height = cssH + 'px';
   const ctx = canvas.getContext('2d');
-  canvas.width = COLS * CELL;
-  canvas.height = VISIBLE_ROWS * CELL;
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+
+function makeRenderer(canvas) {
+  const W = COLS * CELL, H = VISIBLE_ROWS * CELL;
+  const ctx = fitCanvas(canvas, W, H);
 
   function drawCell(x, y, color) {
     const vy = y - HIDDEN_ROWS;
@@ -27,16 +39,16 @@ function makeRenderer(canvas) {
     ctx.strokeStyle = 'rgba(255,255,255,0.06)';
     ctx.lineWidth = 1;
     for (let x = 1; x < COLS; x++) {
-      ctx.beginPath(); ctx.moveTo(x * CELL + 0.5, 0); ctx.lineTo(x * CELL + 0.5, canvas.height); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(x * CELL + 0.5, 0); ctx.lineTo(x * CELL + 0.5, H); ctx.stroke();
     }
     for (let y = 1; y < VISIBLE_ROWS; y++) {
-      ctx.beginPath(); ctx.moveTo(0, y * CELL + 0.5); ctx.lineTo(canvas.width, y * CELL + 0.5); ctx.stroke();
+      ctx.beginPath(); ctx.moveTo(0, y * CELL + 0.5); ctx.lineTo(W, y * CELL + 0.5); ctx.stroke();
     }
   }
 
   function draw(game) {
     ctx.fillStyle = '#0d0f14';
-    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    ctx.fillRect(0, 0, W, H);
     drawGrid();
 
     for (let y = 0; y < TOTAL_ROWS; y++) {
@@ -53,11 +65,11 @@ function makeRenderer(canvas) {
 
     if (game.over) {
       ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillRect(0, 0, W, H);
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 28px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('GAME OVER', canvas.width / 2, canvas.height / 2);
+      ctx.fillText('GAME OVER', W / 2, H / 2);
     }
   }
 
