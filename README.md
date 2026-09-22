@@ -1,6 +1,6 @@
 # Tetris, agent-4
 
-Open `index.html`. No build, no dependencies. `node test/run.js` runs 91
+Open `index.html`. No build, no dependencies. `node test/run.js` runs 95
 checks against the DOM-free core.
 
 ## Shape
