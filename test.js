@@ -214,6 +214,27 @@ test('hard-drop trail spans the fall and is gone after TRAIL_MS', () => {
   T.update(g, T.TRAIL_MS + 1); assert.strictEqual(g.trail, null);
 });
 
+test('I 180 flush against the left wall takes the (1,0) kick; in column 9 it needs none', () => {
+  let g = T.newGame(rng(2)); placeAt(g, 'I', -2, 1);            // vertical I in column 0
+  assert.ok(T.fits(g.board, g.piece.shape, -2, g.piece.y, 1));
+  assert.ok(T.tryRotate(g, 2)); assert.strictEqual(g.piece.o, 3); assert.strictEqual(g.piece.x, -1);
+  for (const [cx] of g.piece.shape.cells[3]) assert.strictEqual(g.piece.x + cx, 0, 'still in column 0');
+  g = T.newGame(rng(2)); placeAt(g, 'I', 7, 1);                  // vertical I in column 9
+  assert.ok(T.tryRotate(g, 2)); assert.strictEqual(g.piece.o, 3); assert.strictEqual(g.piece.x, 7);
+  for (const [cx] of g.piece.shape.cells[3]) assert.strictEqual(g.piece.x + cx, 8);
+});
+test('DAS charged before a clear shifts the next piece exactly one cell on its first frame', () => {
+  const g = T.newGame(rng(6)); row(g, bot, '#########.');
+  placeAt(g, 'I'); T.tryRotate(g, 1);
+  T.press(g, 'right'); T.update(g, T.DAS + 3 * T.ARR);           // charged and repeating, now at the wall
+  assert.strictEqual(g.piece.x, 7);
+  T.hardDrop(g); assert.ok(g.clearing);
+  T.update(g, T.CLEAR_FLASH + 1);                                // flash ends, piece spawns at x=3
+  const x0 = g.piece.x;
+  T.update(g, 1); assert.strictEqual(g.piece.x, x0 + 1, 'one cell, not banked repeats');
+  T.update(g, T.ARR); assert.strictEqual(g.piece.x, x0 + 2, 'then one per ARR');
+});
+
 // ---- M5
 test('pause freezes gravity and input; unpause resumes', () => {
   const g = T.newGame(rng(8)); placeAt(g, 'T'); const y0 = g.piece.y;
