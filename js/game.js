@@ -52,6 +52,7 @@ class Game {
     this.lines = 0;
     this.level = 1;
     this.over = false;
+    this.paused = false;
     this.combo = -1;          // consecutive line-clearing locks; -1 = none yet
     this.b2b = false;         // last clear was a tetris or T-spin
     this.lastClear = null;    // { label, points } of the latest scoring lock
@@ -138,7 +139,12 @@ class Game {
   grounded() { return !this.fits(this.active, 0, 1); }
 
   // Input is accepted only while a piece is live and nothing is animating.
-  get accepting() { return !this.over && this.active && !this.clearing; }
+  get accepting() { return !this.over && !this.paused && this.active && !this.clearing; }
+
+  setPaused(on) {
+    if (this.over) return;
+    this.paused = on;
+  }
 
   // A successful move or rotate while grounded restarts the lock timer, up
   // to LOCK_RESETS times. The budget refills in descend() on a new lowest row.
@@ -282,7 +288,7 @@ class Game {
   }
 
   update(dt) {
-    if (this.over) return;
+    if (this.over || this.paused) return;   // paused freezes every accumulator, the flash included
 
     if (this.dropTrail) {
       this.dropTrail.t += dt;

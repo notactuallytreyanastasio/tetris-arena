@@ -9,8 +9,7 @@ const ARR = 33;    // ms between shifts once auto-shifting
 class Input {
   constructor(game) {
     this.game = game;
-    this.left = false;
-    this.right = false;
+    this.held = [];         // directions currently held, oldest first; the newest wins
     this.dasDir = 0;        // -1, 0, +1: direction currently auto-shifting
     this.dasAcc = 0;        // ms toward the DAS threshold, then toward next ARR
     this.charged = false;   // DAS elapsed, now repeating at ARR
@@ -18,23 +17,51 @@ class Input {
     this.onKeyUp = this.onKeyUp.bind(this);
   }
 
-  attach(target = window) {
+  attach(target = window, doc = document) {
     target.addEventListener('keydown', this.onKeyDown);
     target.addEventListener('keyup', this.onKeyUp);
+    // Losing focus drops every held key and pauses, so a direction held when
+    // focus left does not auto-repeat into the wall when it comes back.
+    const lost = () => { this.releaseAll(); this.game.setPaused(true); };
+    target.addEventListener('blur', lost);
+    doc.addEventListener('visibilitychange', () => { if (doc.hidden) lost(); });
   }
 
-  startShift(dir) {
+  press(dir) {
+    this.held = this.held.filter(d => d !== dir);
+    this.held.push(dir);
     this.dasDir = dir;
     this.dasAcc = 0;
     this.charged = false;
     this.game.move(dir);    // first shift is immediate
   }
 
-  stopShift() {
-    // Releasing one direction while the other is still held resumes the other.
-    if (this.left) this.startShift(-1);
-    else if (this.right) this.startShift(1);
-    else this.dasDir = 0;
+  release(dir) {
+    this.held = this.held.filter(d => d !== dir);
+    if (this.dasDir !== dir) return;
+    const older = this.held[this.held.length - 1];
+    if (older === undefined) { this.dasDir = 0; return; }
+    // The older key has been held longer than DAS by definition, so it
+    // resumes already charged: one shift now, then ARR.
+    this.dasDir = older;
+    this.dasAcc = 0;
+    this.charged = true;
+    this.game.move(older);
+  }
+
+  releaseAll() {
+    this.held = [];
+    this.dasDir = 0;
+    this.dasAcc = 0;
+    this.charged = false;
+    this.game.softDrop = false;
+  }
+
+  togglePause() {
+    const g = this.game;
+    if (g.over) return;
+    if (!g.paused) this.releaseAll();
+    g.setPaused(!g.paused);
   }
 
   tick(dt) {
@@ -52,9 +79,10 @@ class Input {
     if (e.repeat) { if (this.handles(e.code)) e.preventDefault(); return; }
     const g = this.game;
     switch (e.code) {
-      case 'ArrowLeft':  this.left = true;  this.startShift(-1); break;
-      case 'ArrowRight': this.right = true; this.startShift(1);  break;
-      case 'ArrowDown':  g.softDrop = true; break;
+      case 'ArrowLeft':  this.press(-1); break;
+      case 'ArrowRight': this.press(1);  break;
+      case 'ArrowDown':  if (g.accepting) g.softDrop = true; break;
+      case 'KeyP': case 'Escape': this.togglePause(); break;
       case 'ArrowUp': case 'KeyX': g.rotate(1); break;
       case 'KeyZ': g.rotate(-1); break;
       case 'Space': g.hardDrop(); break;
@@ -67,8 +95,8 @@ class Input {
 
   onKeyUp(e) {
     switch (e.code) {
-      case 'ArrowLeft':  this.left = false;  if (this.dasDir === -1) this.stopShift(); break;
-      case 'ArrowRight': this.right = false; if (this.dasDir === 1) this.stopShift(); break;
+      case 'ArrowLeft':  this.release(-1); break;
+      case 'ArrowRight': this.release(1);  break;
       case 'ArrowDown':  this.game.softDrop = false; break;
       default: return;
     }
@@ -76,7 +104,7 @@ class Input {
   }
 
   handles(code) {
-    return ['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'KeyX', 'KeyZ', 'Space', 'KeyR', 'KeyC', 'ShiftLeft', 'ShiftRight'].includes(code);
+    return ['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'KeyX', 'KeyZ', 'Space', 'KeyR', 'KeyC', 'ShiftLeft', 'ShiftRight', 'KeyP', 'Escape'].includes(code);
   }
 }
 

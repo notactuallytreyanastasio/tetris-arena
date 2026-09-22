@@ -55,9 +55,9 @@
       clearEl.textContent = shownClear ? `${shownClear.label} +${shownClear.points}` : '';
       clearEl.classList.remove('pop'); void clearEl.offsetWidth; clearEl.classList.add('pop');
     }
-    const showOverlay = game.over;
-    overlay.classList.toggle('hidden', !showOverlay);
+    overlay.classList.toggle('hidden', !(game.over || game.paused));
     if (game.over) { overlayTitle.textContent = 'GAME OVER'; overlayHint.textContent = 'R to restart'; }
+    else if (game.paused) { overlayTitle.textContent = 'PAUSED'; overlayHint.textContent = 'P to resume'; }
   }
 
   let last = performance.now();
