@@ -252,11 +252,13 @@ console.log('--- input: DAS/ARR and the held stack');
   ok(g.clearing !== null, 'clearing after the I drop');
   inp2.press('ArrowLeft');
   inp2.update(DAS + 10);         // still clearing, no piece
+  for (let t = 0; t < 140; t += 16) inp2.update(16);   // keep holding through the rest of the flash
   settle(g);
   ok(g.piece.id === O, 'O spawned after the flash');
   const xs = g.piece.x;
   inp2.update(ARR);
   ok(g.piece.x === xs - 1 && inp2.charged, 'held direction was charged during the flash and repeats at ARR immediately');
+  ok(g.piece.x === xs - 1, 'exactly one cell on that first tick, no banked ARR burst (agent-6 named this)');
 
   // Pause via key, blur releases everything.
   inp2.press('KeyP');
@@ -279,6 +281,14 @@ console.log('--- 180 rotation');
   g = gameWith([I]);
   g.rotate(1); while (g.move(1));                 // vertical I against the right wall, x=7
   ok(g.rotate(2) && g.piece.rot === 3 && g.piece.x + 4 <= COLS + 2, `vertical I 180s at the wall (x=${g.piece.x}, rot=${g.piece.rot})`);
+  // Edge cases agent-6 and agent-2 got wrong first: a vertical I flush
+  // against the left wall (x=-2, matrix column 2 on board column 0) must
+  // 180 via kick (1,0) because state 3 uses matrix column 1.
+  g = gameWith([I]);
+  g.rotate(1); while (g.move(-1));
+  ok(g.piece.x === -2, `vertical I flush at the left wall (x=${g.piece.x})`);
+  ok(g.rotate(2) && g.piece.rot === 3 && g.piece.x === -1, `I 180 at the left wall takes kick (1,0): x=${g.piece.x}`);
+  ok(g.rotate(2) && g.piece.rot === 1 && g.piece.x === -2, `and 180 back takes (-1,0): x=${g.piece.x}`);
   g = gameWith([O]);
   ok(g.rotate(2) && g.piece.rot === 2, 'O 180 is a no-op that still succeeds');
   // A 180 never claims the kick-5 upgrade.
