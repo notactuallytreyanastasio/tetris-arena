@@ -39,6 +39,8 @@ class Input {
       case 'ArrowDown':  this.down = true; g.softDrop(true); break;
       case 'ArrowUp': case 'KeyX': g.rotate(1); break;
       case 'KeyZ': case 'ControlLeft': g.rotate(-1); break;
+      case 'KeyA': g.rotate(2); break;
+      case 'KeyC': case 'ShiftLeft': case 'ShiftRight': g.swapHold(); break;
       case 'Space': g.hardDrop(); break;
       case 'KeyR': g.reset(); break;
       default: return;

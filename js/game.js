@@ -12,6 +12,8 @@ const LOCK_DELAY = 500;    // ms a grounded piece waits before locking
 const LOCK_RESETS = 15;    // moves/rotates that may restart that wait...
                            // ...until the piece reaches a new lowest row
 const LINES_PER_LEVEL = 10;
+const NEXT_COUNT = 5;      // pieces shown in the preview
+const CLEAR_FLASH_MS = 120; // full rows stay white this long before collapsing
 
 // Guideline scoring, all multiplied by level at award time.
 const SCORE = {
@@ -60,12 +62,23 @@ class Game {
     this.lastClear = null; // { label, points } of the most recent scoring lock
     this.gravityAcc = 0;
     this.clock = 0;     // ms since reset; timestamps lastClear for the HUD
+    this.queue = [];    // upcoming pieces, front is next
+    this.hold = null;   // parked piece, or null
+    this.holdUsed = false; // hold is allowed once per piece
+    this.clearing = null;  // { rows, spin, acc } while full rows flash; no active piece
     this.active = null;
     this.spawn();
   }
 
-  spawn() {
-    const piece = this.bag.next();
+  takeNext() {
+    while (this.queue.length <= NEXT_COUNT) this.queue.push(this.bag.next());
+    return this.queue.shift();
+  }
+
+  // Spawn the next queued piece, or the given one when coming out of hold.
+  spawn(forced) {
+    const piece = forced || this.takeNext();
+    if (!forced) this.holdUsed = false;
     // SRS spawn: box top-left at column 3 (4 for O), two rows above the
     // skyline, then an immediate step down if that is free. That leaves two
     // more hidden rows above for kicks to use.
@@ -86,9 +99,28 @@ class Game {
     this.gravityAcc = 0;
   }
 
+  // Swap the active piece with the hold slot, once per piece. The piece
+  // coming out of hold spawns fresh: rotation 0 at the spawn position.
+  swapHold() {
+    if (this.over || !this.active || this.holdUsed) return false;
+    const parked = this.hold;
+    this.hold = this.active.piece;
+    this.spawn(parked || this.takeNext());
+    this.holdUsed = true;
+    return true;
+  }
+
   grounded() {
     const a = this.active;
     return !this.board.fits(a.piece, a.rot, a.x, a.y + 1);
+  }
+
+  // Row the active piece would land on if hard-dropped. Drawn as the ghost.
+  ghostY() {
+    const a = this.active;
+    let y = a.y;
+    while (this.board.fits(a.piece, a.rot, a.x, y + 1)) y++;
+    return y;
   }
 
   // Try to move the active piece by (dx, dy). Returns true on success.
@@ -117,7 +149,7 @@ class Game {
   }
 
   move(dx) {
-    if (this.over) return false;
+    if (this.over || !this.active) return false;
     const ok = this.tryMove(dx, 0);
     if (ok) {
       this.active.spun = false;
@@ -126,11 +158,11 @@ class Game {
     return ok;
   }
 
-  // dir is +1 clockwise, -1 counter-clockwise. Walk the SRS kick list for
-  // this (from, to) pair; the first offset that fits wins. Kick dy is
-  // negated because the tables are written with +y up.
+  // dir is +1 clockwise, -1 counter-clockwise, 2 for a 180. Walk the kick
+  // list for this (from, to) pair; the first offset that fits wins. Kick dy
+  // is negated because the tables are written with +y up.
   rotate(dir) {
-    if (this.over) return false;
+    if (this.over || !this.active) return false;
     const a = this.active;
     const to = (a.rot + dir + 4) % 4;
     const kicks = kicksFor(a.piece, a.rot, to);
@@ -155,7 +187,7 @@ class Game {
   }
 
   hardDrop() {
-    if (this.over) return;
+    if (this.over || !this.active) return;
     let rows = 0;
     while (this.tryMove(0, 1)) rows++;
     if (rows > 0) this.active.spun = false;
@@ -226,6 +258,9 @@ class Game {
     if (points > 0) this.lastClear = { label: label.trim(), points, at: this.clock };
   }
 
+  // Full rows are not removed here. They are handed to the flash timer
+  // (shape from agent-2) and collapse in finishClear() once it expires;
+  // until then there is no active piece.
   lock() {
     const a = this.active;
     const spin = this.tspinKind();
@@ -235,6 +270,18 @@ class Game {
       return;
     }
     const rows = this.board.fullRows();
+    if (rows.length === 0) {
+      this.scoreLock(0, spin); // a lineless T-spin still scores
+      this.spawn();
+      return;
+    }
+    this.active = null;
+    this.clearing = { rows, spin, acc: 0 };
+  }
+
+  finishClear() {
+    const { rows, spin } = this.clearing;
+    this.clearing = null;
     this.board.clearRows(rows);
     this.scoreLock(rows.length, spin);
     this.spawn();
@@ -244,6 +291,12 @@ class Game {
   update(dt) {
     if (this.over) return;
     this.clock += dt;
+
+    if (this.clearing) {
+      this.clearing.acc += dt;
+      if (this.clearing.acc >= CLEAR_FLASH_MS) this.finishClear();
+      return;
+    }
     const a = this.active;
 
     let interval = gravityMs(this.level);

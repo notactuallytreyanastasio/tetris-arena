@@ -112,8 +112,19 @@ const KICKS_I = {
   '0>3': [[0, 0], [-1, 0], [2, 0], [-1, 2], [2, -1]],
 };
 
+// 180-degree rotation kicks, from TETR.IO's SRS+ (Guideline SRS has no 180).
+// Same table for every piece. Six tests, +y up like the tables above.
+const KICKS_180 = {
+  '0>2': [[0, 0], [0, 1], [1, 1], [-1, 1], [1, 0], [-1, 0]],
+  '2>0': [[0, 0], [0, -1], [-1, -1], [1, -1], [-1, 0], [1, 0]],
+  '1>3': [[0, 0], [1, 0], [1, 2], [1, 1], [0, 2], [0, 1]],
+  '3>1': [[0, 0], [-1, 0], [-1, 2], [-1, 1], [0, 2], [0, 1]],
+};
+
 function kicksFor(piece, from, to) {
   if (piece.name === 'O') return [[0, 0]];
+  const key = from + '>' + to;
+  if ((to - from + 4) % 4 === 2) return KICKS_180[key];
   const table = piece.name === 'I' ? KICKS_I : KICKS_JLSTZ;
-  return table[from + '>' + to];
+  return table[key];
 }

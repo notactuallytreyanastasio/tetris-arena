@@ -8,11 +8,15 @@
 </head>
 <body>
   <main class="arena">
+    <aside class="panel side-left">
+      <section class="stat"><h2>Hold</h2><canvas id="hold"></canvas></section>
+    </aside>
     <div class="stage">
       <canvas id="board"></canvas>
       <div id="clear" class="clear-label"></div>
     </div>
     <aside class="panel">
+      <section class="stat"><h2>Next</h2><canvas id="next"></canvas></section>
       <section class="stat"><h2>Score</h2><div id="score">0</div></section>
       <section class="stat"><h2>Level</h2><div id="level">1</div></section>
       <section class="stat"><h2>Lines</h2><div id="lines">0</div></section>
@@ -20,6 +24,8 @@
         <div><kbd>←</kbd><kbd>→</kbd> move</div>
         <div><kbd>↑</kbd><kbd>X</kbd> rotate cw</div>
         <div><kbd>Z</kbd> rotate ccw</div>
+        <div><kbd>A</kbd> rotate 180</div>
+        <div><kbd>C</kbd><kbd>Shift</kbd> hold</div>
         <div><kbd>↓</kbd> soft drop</div>
         <div><kbd>Space</kbd> hard drop</div>
         <div><kbd>R</kbd> restart</div>

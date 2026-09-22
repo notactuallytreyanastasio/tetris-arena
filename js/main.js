@@ -1,7 +1,11 @@
 // Wires the pieces together and runs the requestAnimationFrame loop.
 
 const game = new Game();
-const renderer = new Renderer(document.getElementById('board'));
+const renderer = new Renderer(
+  document.getElementById('board'),
+  document.getElementById('next'),
+  document.getElementById('hold')
+);
 const input = new Input(game);
 const hud = new Hud(game);
 

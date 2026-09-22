@@ -78,6 +78,16 @@ html, body {
   font-variant-numeric: tabular-nums;
 }
 
+.stat canvas {
+  display: block;
+  margin: 4px auto 0;
+}
+
+.side-left {
+  width: 120px;
+  align-self: flex-start;
+}
+
 .keys {
   margin-top: 8px;
   font-size: 12px;
