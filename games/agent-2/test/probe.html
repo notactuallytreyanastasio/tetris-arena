@@ -1,0 +1,85 @@
+<!doctype html>
+<!--
+  Browser probe: run with
+    chrome --headless=new --virtual-time-budget=5000 --dump-dom test/probe.html | grep -o '<title>[^<]*'
+  Under --virtual-time-budget requestAnimationFrame fires once at most, so
+  this page does not use the frame loop. It builds the real Game, attaches
+  the real input layer to window, dispatches real KeyboardEvents, and steps
+  update() by hand. Findings go into document.title because that is the
+  one thing --dump-dom prints reliably. Approach from agent-3, agent-4 and
+  agent-9.
+-->
+<html lang="en">
+<head><meta charset="utf-8"><title>probe: not run</title></head>
+<body>
+<script src="../src/pieces.js"></script>
+<script src="../src/board.js"></script>
+<script src="../src/game.js"></script>
+<script src="../src/input.js"></script>
+<script>
+(function () {
+  const errors = [];
+  window.onerror = (msg, src, line) => { errors.push(`${msg} @${line}`); };
+  const results = [];
+  const check = (name, got, want) => {
+    const ok = JSON.stringify(got) === JSON.stringify(want);
+    results.push((ok ? 'ok ' : 'FAIL ') + name + (ok ? '' : ` got ${JSON.stringify(got)} want ${JSON.stringify(want)}`));
+  };
+  const key = (type, k, extra = {}) => window.dispatchEvent(new KeyboardEvent(type, { key: k, bubbles: true, ...extra }));
+  try {
+    const game = new Game(12345);
+    const input = attachInput(game);
+    const step = (ms) => { for (let t = 0; t < ms; t += 16) { input.update(16); game.update(16); } };
+
+    const y0 = game.piece.y;
+    step(1100);
+    check('gravity moves the piece down in a real browser', game.piece.y > y0, true);
+
+    const x0 = game.piece.x;
+    key('keydown', 'ArrowRight');
+    check('ArrowRight keydown moves', game.piece.x, x0 + 1);
+    step(DAS_MS + ARR_MS * 2 + 8);
+    key('keyup', 'ArrowRight');
+    check('DAS then ARR repeat', game.piece.x >= x0 + 3, true);
+
+    key('keydown', 'ArrowUp');
+    check('ArrowUp rotates', game.piece.rot, 1);
+    key('keydown', 'a');
+    check('A rotates 180', game.piece.rot, 3);
+
+    const type = game.piece.type;
+    key('keydown', ' ');
+    check('Space hard-drops and locks', [game.board.flat().filter(Boolean).length, game.piece && game.piece.type !== type || game.piece === null], [4, true]);
+
+    key('keydown', 'c');
+    check('C holds', game.hold !== null, true);
+
+    key('keydown', 'p');
+    const yp = game.piece.y; step(2000);
+    check('P pauses gravity', game.piece.y, yp);
+    key('keydown', 'Escape');
+    step(1100);
+    check('Esc resumes', game.piece.y > yp, true);
+
+    const seed = game.seed;
+    key('keydown', 'R', { shiftKey: true });
+    check('Shift+R keeps the seed', game.seed, seed);
+    key('keydown', 'r');
+    check('R deals a new seed', game.seed !== seed, true);
+
+    // Play to game over with hard drops only; this exercises spawn, lock,
+    // lock-out/block-out and the clear flash under the real environment.
+    let drops = 0;
+    while (!game.over && drops < 400) { key('keydown', ' '); step(200); drops++; }
+    check('hard-dropping ends the game', game.over, true);
+  } catch (e) {
+    errors.push(String(e && e.stack || e));
+  }
+  const fails = results.filter((r) => r.startsWith('FAIL')).length;
+  document.title = `probe: ${fails ? fails + ' FAILED' : 'all passed'}; ${results.length} checks; errors=${errors.length}` +
+    (fails ? ' | ' + results.filter((r) => r.startsWith('FAIL')).join(' | ') : '') +
+    (errors.length ? ' | ' + errors.join(' | ') : '');
+})();
+</script>
+</body>
+</html>

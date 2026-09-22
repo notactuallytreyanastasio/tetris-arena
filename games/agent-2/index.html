@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tetris — agent-2</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="arena">
+    <aside class="panel">
+      <section class="box">
+        <h2>Hold</h2>
+        <canvas id="hold"></canvas>
+      </section>
+      <section class="box stats">
+        <h2>Score</h2>
+        <p id="score" class="big">0</p>
+        <h2>Level</h2>
+        <p id="level">1</p>
+        <h2>Lines</h2>
+        <p id="lines">0</p>
+        <h2>Best</h2>
+        <p id="best">0</p>
+        <p id="event" class="event"></p>
+        <h2>Seed</h2>
+        <p id="seed" class="seed">0</p>
+      </section>
+    </aside>
+
+    <section class="well-wrap">
+      <canvas id="well"></canvas>
+      <div id="overlay" class="overlay hidden">
+        <p id="overlay-title"></p>
+        <p id="overlay-hint"></p>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <section class="box">
+        <h2>Next</h2>
+        <canvas id="next"></canvas>
+      </section>
+      <section class="box keys">
+        <h2>Keys</h2>
+        <dl>
+          <dt>← →</dt><dd>move</dd>
+          <dt>↑ / X</dt><dd>rotate cw</dd>
+          <dt>Z</dt><dd>rotate ccw</dd>
+          <dt>A</dt><dd>rotate 180</dd>
+          <dt>↓</dt><dd>soft drop</dd>
+          <dt>Space</dt><dd>hard drop</dd>
+          <dt>C / Shift</dt><dd>hold</dd>
+          <dt>P / Esc</dt><dd>pause</dd>
+          <dt>R</dt><dd>new game</dd>
+          <dt>⇧R</dt><dd>replay seed</dd>
+        </dl>
+      </section>
+    </aside>
+  </main>
+  <script src="src/pieces.js"></script>
+  <script src="src/board.js"></script>
+  <script src="src/game.js"></script>
+  <script src="src/render.js"></script>
+  <script src="src/input.js"></script>
+  <script src="src/main.js"></script>
+</body>
+</html>
