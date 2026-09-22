@@ -1,0 +1,57 @@
+<!DOCTYPE html>
+<!-- Motion probe for headless Chrome. Loads the real game.js against the
+     real index.html markup, lets it run, then reports through the title so
+     `chrome --headless --dump-dom` can grep the result. See browser.sh. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>probe: pending</title>
+<link rel="stylesheet" href="../style.css">
+</head>
+<body>
+<main class="arena">
+  <aside class="panel left">
+    <section class="box"><h2>Hold</h2><canvas id="hold"></canvas></section>
+    <section class="box stats">
+      <p id="score">0</p><p id="level">1</p><p id="lines">0</p><p id="hiscore">0</p><p id="seed">0</p>
+    </section>
+  </aside>
+  <section class="board-wrap">
+    <canvas id="board"></canvas>
+    <div id="overlay" class="overlay hidden"><p id="overlay-title"></p><p id="overlay-sub"></p></div>
+  </section>
+  <aside class="panel right"><section class="box"><h2>Next</h2><canvas id="next"></canvas></section></aside>
+</main>
+<script>
+  const errors = [];
+  window.addEventListener('error', (e) => errors.push(e.message));
+</script>
+<script src="../game.js"></script>
+<script>
+  // Fixed seed so the report is comparable run to run.
+  const T = window.__tetris;
+  T.reset(42);
+  let frames = 0;
+  const count = () => { frames++; requestAnimationFrame(count); };
+  requestAnimationFrame(count);
+  const key = (code, type = 'keydown') => window.dispatchEvent(new KeyboardEvent(type, { code, bubbles: true }));
+  setTimeout(() => key('ArrowRight'), 200);           // starts DAS
+  setTimeout(() => key('ArrowRight', 'keyup'), 600);  // ~1 + (400-170)/40 = 6 columns
+  setTimeout(() => key('ArrowUp'), 700);               // rotate cw
+  setTimeout(() => key('Space'), 800);                 // hard drop, then a new piece spawns
+  setTimeout(() => {
+    const s = T.state;
+    const locked = Array.from(T.board).filter(Boolean).length;
+    document.title = [
+      'probe:',
+      errors.length ? 'errors=' + errors.join('|') : 'errors=0',
+      'frames=' + frames,
+      'locked=' + locked,
+      'score=' + s.score,
+      'pieceX=' + s.piece.x,
+      'over=' + s.over,
+    ].join(' ');
+  }, 1500);
+</script>
+</body>
+</html>
