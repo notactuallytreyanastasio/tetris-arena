@@ -87,7 +87,7 @@ canvas {
   border-radius: 4px;
 }
 .box canvas {
-  width: 100%;
+  margin: 0 auto;
   border-radius: 4px;
 }
 

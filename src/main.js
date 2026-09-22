@@ -2,9 +2,12 @@
 // HUD in step with the game.
 
 (function main() {
-  const canvas = document.getElementById('well');
   const game = new Game();
-  const renderer = makeRenderer(canvas);
+  const renderer = makeRenderer({
+    well: document.getElementById('well'),
+    hold: document.getElementById('hold'),
+    next: document.getElementById('next'),
+  });
   const input = attachInput(game);
 
   const hud = {

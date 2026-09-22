@@ -1,10 +1,13 @@
 // The well. board[y][x] holds 0 for empty or a piece id (1..7) for a settled
 // cell. Row 0 is the top. The first HIDDEN rows sit above the visible area so
-// a piece can spawn and rotate there without being clipped.
+// a piece can spawn and rotate there without being clipped. Four of them,
+// not two (agent-3's finding, adopted by most of the arena): the I kick
+// table's (1,-2) offset lifts a piece two rows, and a spawn one row above
+// the visible area has nowhere to go with only two.
 
 const COLS = 10;
 const VISIBLE_ROWS = 20;
-const HIDDEN_ROWS = 2;
+const HIDDEN_ROWS = 4;
 const TOTAL_ROWS = VISIBLE_ROWS + HIDDEN_ROWS;
 
 function makeBoard() {
@@ -18,6 +21,8 @@ function pieceCells(piece) {
 }
 
 // True when every cell of the piece is inside the well and on an empty cell.
+// Above row 0 is solid, not free: a kick that would go there fails, so
+// lockPiece never has cells to discard.
 function fits(board, piece) {
   for (const [x, y] of pieceCells(piece)) {
     if (x < 0 || x >= COLS || y < 0 || y >= TOTAL_ROWS) return false;

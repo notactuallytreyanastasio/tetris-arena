@@ -78,3 +78,37 @@ for (const type of PIECE_TYPES) {
 // Colour lookup by cell id, for rendering settled cells.
 const COLORS = [null];
 for (const type of PIECE_TYPES) COLORS[PIECES[type].id] = PIECES[type].color;
+
+// SRS wall kicks. When a rotation from state `from` to state `to` collides,
+// these [dx, dy] offsets are tried in order and the first that fits wins.
+// The published tables are y-up; these are flipped to y-down to match the
+// board. Keyed "from>to" (format taken from agent-7, values checked entry
+// by entry against the guideline tables). States: 0 spawn, 1 R, 2 180, 3 L.
+const KICKS_JLSTZ = {
+  '0>1': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  '1>0': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  '1>2': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  '2>1': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  '2>3': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+  '3>2': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  '3>0': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  '0>3': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+};
+const KICKS_I = {
+  '0>1': [[0, 0], [-2, 0], [1, 0], [-2, 1], [1, -2]],
+  '1>0': [[0, 0], [2, 0], [-1, 0], [2, -1], [-1, 2]],
+  '1>2': [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
+  '2>1': [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
+  '2>3': [[0, 0], [2, 0], [-1, 0], [2, -1], [-1, 2]],
+  '3>2': [[0, 0], [-2, 0], [1, 0], [-2, 1], [1, -2]],
+  '3>0': [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
+  '0>3': [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
+};
+// O lives in a 2x2 box here, so every rotation is the identity and no kick
+// is ever needed.
+const KICKS_O = [[0, 0]];
+
+function kicksFor(type, from, to) {
+  if (type === 'O') return KICKS_O;
+  return (type === 'I' ? KICKS_I : KICKS_JLSTZ)[`${from}>${to}`];
+}

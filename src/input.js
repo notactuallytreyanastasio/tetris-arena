@@ -11,6 +11,7 @@ const KEYS = {
   ArrowUp: 'cw', x: 'cw', X: 'cw',
   z: 'ccw', Z: 'ccw',
   ' ': 'hard',
+  c: 'hold', C: 'hold', Shift: 'hold',
   r: 'reset', R: 'reset',
 };
 
@@ -38,6 +39,7 @@ function attachInput(game) {
       case 'cw': game.rotate(1); break;
       case 'ccw': game.rotate(-1); break;
       case 'hard': game.hardDrop(); break;
+      case 'hold': game.holdPiece(); break;
       case 'reset': game.reset(); break;
     }
   });
