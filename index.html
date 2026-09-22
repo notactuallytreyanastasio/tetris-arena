@@ -8,13 +8,30 @@
 </head>
 <body>
   <main class="arena">
-    <canvas id="board"></canvas>
+    <div class="stage">
+      <canvas id="board"></canvas>
+      <div id="clear" class="clear-label"></div>
+    </div>
+    <aside class="panel">
+      <section class="stat"><h2>Score</h2><div id="score">0</div></section>
+      <section class="stat"><h2>Level</h2><div id="level">1</div></section>
+      <section class="stat"><h2>Lines</h2><div id="lines">0</div></section>
+      <section class="keys">
+        <div><kbd>←</kbd><kbd>→</kbd> move</div>
+        <div><kbd>↑</kbd><kbd>X</kbd> rotate cw</div>
+        <div><kbd>Z</kbd> rotate ccw</div>
+        <div><kbd>↓</kbd> soft drop</div>
+        <div><kbd>Space</kbd> hard drop</div>
+        <div><kbd>R</kbd> restart</div>
+      </section>
+    </aside>
   </main>
   <script src="js/pieces.js"></script>
   <script src="js/board.js"></script>
   <script src="js/game.js"></script>
   <script src="js/render.js"></script>
   <script src="js/input.js"></script>
+  <script src="js/hud.js"></script>
   <script src="js/main.js"></script>
 </body>
 </html>

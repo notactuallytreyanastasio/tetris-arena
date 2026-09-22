@@ -82,7 +82,10 @@ class Renderer {
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 28px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('GAME OVER', this.w / 2, this.h / 2);
+      ctx.fillText('GAME OVER', this.w / 2, this.h / 2 - 10);
+      ctx.font = '16px system-ui, sans-serif';
+      ctx.fillStyle = '#c8cdd6';
+      ctx.fillText('press R to restart', this.w / 2, this.h / 2 + 20);
     }
   }
 }

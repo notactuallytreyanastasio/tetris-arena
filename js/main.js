@@ -3,6 +3,7 @@
 const game = new Game();
 const renderer = new Renderer(document.getElementById('board'));
 const input = new Input(game);
+const hud = new Hud(game);
 
 let last = performance.now();
 function frame(now) {
@@ -13,6 +14,7 @@ function frame(now) {
   input.update(dt);
   game.update(dt);
   renderer.draw(game);
+  hud.update();
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);

@@ -3,6 +3,8 @@
   --panel: #10141c;
   --line: #1f2633;
   --fg: #e6e9ef;
+  --muted: #7d8696;
+  --accent: #f2d23c;
 }
 
 * { box-sizing: border-box; }
@@ -24,8 +26,78 @@ html, body {
   padding: 16px;
 }
 
+.stage {
+  position: relative;
+}
+
 #board {
+  display: block;
   border: 2px solid var(--line);
   background: #0b0e14;
-  image-rendering: pixelated;
+}
+
+.clear-label {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 40%;
+  text-align: center;
+  font-weight: 800;
+  font-size: 20px;
+  letter-spacing: 0.08em;
+  color: var(--accent);
+  text-shadow: 0 2px 8px rgba(0,0,0,0.8);
+  pointer-events: none;
+}
+
+.panel {
+  width: 160px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.stat {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 8px 12px;
+}
+
+.stat h2 {
+  margin: 0 0 2px;
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.stat div {
+  font-size: 24px;
+  font-variant-numeric: tabular-nums;
+}
+
+.keys {
+  margin-top: 8px;
+  font-size: 12px;
+  color: var(--muted);
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+kbd {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 5px;
+  margin-right: 4px;
+  border: 1px solid var(--line);
+  border-bottom-width: 2px;
+  border-radius: 4px;
+  background: var(--panel);
+  color: var(--fg);
+  font-family: inherit;
+  font-size: 11px;
+  text-align: center;
 }

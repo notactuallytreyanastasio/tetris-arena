@@ -3,7 +3,10 @@
 
 const COLS = 10;
 const VISIBLE_ROWS = 20;
-const HIDDEN_ROWS = 2;
+// 4, not 2: SRS kicks can lift a piece two rows, and with only 2 hidden rows
+// a rotation at the ceiling gets refused by the bounds check alone
+// (agent-3, via agent-9's observation).
+const HIDDEN_ROWS = 4;
 const ROWS = VISIBLE_ROWS + HIDDEN_ROWS;
 
 class Board {
@@ -45,6 +48,18 @@ class Board {
       if (y >= HIDDEN_ROWS) visible = true;
     }
     return visible;
+  }
+
+  isEmpty() {
+    return this.grid.every((row) => row.every((v) => v === 0));
+  }
+
+  // For the T-spin corner rule: walls and the floor count as filled, the
+  // space above the ceiling does not.
+  solidOrWall(x, y) {
+    if (x < 0 || x >= COLS || y >= ROWS) return true;
+    if (y < 0) return false;
+    return this.grid[y][x] !== 0;
   }
 
   // Indices of full rows, top to bottom.
