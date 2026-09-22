@@ -153,7 +153,7 @@ function lcg(seed) { let s = seed; return () => (s = (s * 1664525 + 1013904223) 
   const s = g.state.score, l = g.state.lines;
   g.state.level = 1; g.state.b2b = false;
   g.lockPiece();
-  check('T-spin double scores 1200 and clears 2', [g.state.score - s, g.state.lines - l, g.state.lastClear], [1200, 2, { lines: 2, tspin: true }]);
+  check('T-spin double scores 1200 and clears 2', [g.state.score - s, g.state.lines - l, g.state.lastClear], [1200, 2, { lines: 2, spin: 'full' }]);
   check('toast names the clear', g.state.toast.text, 'T-SPIN DOUBLE  +1200');
   settle(g);
 
@@ -165,7 +165,7 @@ function lcg(seed) { let s = seed; return () => (s = (s * 1664525 + 1013904223) 
   g.state.lastWasRotate = false;
   const s2 = g.state.score;
   g.hardDrop();
-  check('dropped-in T is a plain double + combo 1 + perfect clear', [g.state.lastClear, g.state.score - s2], [{ lines: 2, tspin: false }, 300 + 2 * (TOTAL - 3 - BUFFER) + 50 + 1200]);
+  check('dropped-in T is a plain double + combo 1 + perfect clear', [g.state.lastClear, g.state.score - s2], [{ lines: 2, spin: null }, 300 + 2 * (TOTAL - 3 - BUFFER) + 50 + 1200]);
   check('b2b broken by a plain double', g.state.b2b, false);
   settle(g);
 
@@ -215,6 +215,43 @@ function lcg(seed) { let s = seed; return () => (s = (s * 1664525 + 1013904223) 
   h.state.cur = { name: 'I', rot: 1, x: 2, y: BUFFER - 1 };
   h.hardDrop();
   check('rotate/move/hold during flash are refused', [h.rotate(1), h.move(1), h.holdPiece()], [false, false, false]);
+}
+
+// --- Round 2: lowest-row refresh, mini T-spin, setPaused -----------------
+{
+  const g = newGame(lcg(10));
+  const b = g.state.board;
+  // exhaust the reset budget on a ledge, then fall off it: budget refreshes
+  b.fill(0);
+  for (let x = 0; x < 5; x++) b[(TOTAL - 4) * COLS + x] = 1; // ledge, left half, 3 rows up
+  g.state.cur = { name: 'O', rot: 0, x: 1, y: TOTAL - 6, lowestY: TOTAL - 6, kick: 0 };
+  check('O rests on the ledge', g.grounded(), true);
+  for (let i = 0; i < 20; i++) g.move(i % 2 ? 1 : -1);
+  check('reset budget exhausted after 15 wiggles', g.state.lockResets, 15);
+  while (g.move(1)) {} // walk off the ledge to the right
+  check('falling to a new lowest row refreshes the budget', [g.tryMove(0, 1), g.state.lockResets], [true, 0]);
+
+  // mini T-spin: three corners solid but only one of the two front corners
+  b.fill(0);
+  b[12 * COLS + 3] = 1; b[12 * COLS + 5] = 1; b[10 * COLS + 3] = 1; // bl, br, tl for a T at (3,10) pointing up
+  g.state.cur = { name: 'T', rot: 3, x: 3, y: 10, lowestY: 10, kick: 0 };
+  check('T rotates to point up with no kick', [g.rotate(1), g.state.cur.rot, g.state.cur.kick], [true, 0, 0]);
+  check('one front corner open -> mini', g.tspinKind(), 'mini');
+  b[10 * COLS + 5] = 1; // fill the other front corner
+  check('both front corners solid -> full', g.tspinKind(), 'full');
+  b[10 * COLS + 5] = 0; g.state.cur.kick = 4;
+  check('fifth kick upgrades mini to full', g.tspinKind(), 'full');
+  g.state.cur.kick = 0;
+  const s0 = g.state.score; g.state.level = 1; g.state.combo = -1;
+  g.lockPiece();
+  check('mini T-spin with no lines scores 100', [g.state.score - s0, g.state.toast.text], [100, 'T-SPIN MINI  +100']);
+
+  // setPaused forces state without toggling
+  const p = newGame(lcg(11));
+  p.setPaused(true); p.setPaused(true);
+  check('setPaused(true) twice stays paused', p.state.paused, true);
+  p.state.over = true; p.setPaused(false);
+  check('setPaused is ignored after game over', p.state.paused, true);
 }
 
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) FAILED`);

@@ -234,6 +234,7 @@ const SOFT_DROP_MULT = 20;  // soft drop is this many times gravity
 const LINES_PER_LEVEL = 10;
 const CLEAR_SCORE = [0, 100, 300, 500, 800];        // guideline, x level
 const TSPIN_SCORE = [400, 800, 1200, 1600];         // T-spin with 0..3 lines
+const MINI_SCORE = [100, 200, 400];                 // mini T-spin with 0..2 lines
 const PERFECT_SCORE = [0, 800, 1200, 1800, 2000];   // perfect clear, x level
 const COMBO_SCORE = 50;                             // x combo x level
 const CLEAR_FLASH = 120;    // ms full rows stay lit before collapsing
@@ -293,7 +294,7 @@ function newGame(rng = Math.random) {
     const x = 3;
     for (const y of [BUFFER - 1, BUFFER - 2]) {
       if (fits(g.board, name, 0, x, y)) {
-        g.cur = { name, rot: 0, x, y };
+        g.cur = { name, rot: 0, x, y, lowestY: y, kick: 0 };
         g.gravityAcc = 0;
         g.lockAcc = 0;
         g.lockResets = 0;
@@ -301,7 +302,7 @@ function newGame(rng = Math.random) {
         return true;
       }
     }
-    g.cur = { name, rot: 0, x, y: BUFFER - 2 };
+    g.cur = { name, rot: 0, x, y: BUFFER - 2, lowestY: BUFFER - 2, kick: 0 };
     g.over = true;
     return false;
   }
@@ -340,6 +341,12 @@ function newGame(rng = Math.random) {
     if (!fits(g.board, c.name, c.rot, c.x + dx, c.y + dy)) return false;
     c.x += dx;
     c.y += dy;
+    if (c.y > c.lowestY) {
+      // Guideline: reaching a new lowest row refreshes the move-reset budget
+      // (agent-6), so a piece that falls further after wiggling is not stuck.
+      c.lowestY = c.y;
+      g.lockResets = 0;
+    }
     return true;
   }
 
@@ -365,6 +372,7 @@ function newGame(rng = Math.random) {
         c.rot = to;
         c.x = nx;
         c.y = ny;
+        c.kick = i;
         g.lastWasRotate = true;
         noteMoved();
         return true;
@@ -384,17 +392,25 @@ function newGame(rng = Math.random) {
 
   // Three-corner rule: the T's centre is box cell (1,1); if at least three
   // of the four diagonal neighbours are filled (walls count) and the piece
-  // arrived by rotation, the lock is a T-spin. Mini T-spins are not split out.
-  function isTSpin() {
+  // arrived by rotation, the lock is a T-spin. It is 'full' when both corners
+  // on the side the T points at are filled, or when it got there via the
+  // fifth kick; otherwise 'mini'. (Grading from agent-5.) Returns
+  // null, 'mini' or 'full'.
+  function tspinKind() {
     const c = g.cur;
-    if (!c || c.name !== 'T' || !g.lastWasRotate) return false;
+    if (!c || c.name !== 'T' || !g.lastWasRotate) return null;
     const cx = c.x + 1, cy = c.y + 1;
-    let corners = 0;
-    if (filledOrWall(g.board, cx - 1, cy - 1)) corners++;
-    if (filledOrWall(g.board, cx + 1, cy - 1)) corners++;
-    if (filledOrWall(g.board, cx - 1, cy + 1)) corners++;
-    if (filledOrWall(g.board, cx + 1, cy + 1)) corners++;
-    return corners >= 3;
+    const tl = filledOrWall(g.board, cx - 1, cy - 1);
+    const tr = filledOrWall(g.board, cx + 1, cy - 1);
+    const bl = filledOrWall(g.board, cx - 1, cy + 1);
+    const br = filledOrWall(g.board, cx + 1, cy + 1);
+    if (tl + tr + bl + br < 3) return null;
+    const front = [[tl, tr], [tr, br], [bl, br], [tl, bl]][c.rot];
+    return (front[0] && front[1]) || c.kick === 4 ? 'full' : 'mini';
+  }
+
+  function isTSpin() {
+    return tspinKind() !== null;
   }
 
   function addScore(points) {
@@ -406,19 +422,22 @@ function newGame(rng = Math.random) {
   }
 
   // Score a lock that cleared n rows. Called before the rows collapse.
-  function scoreLock(n, tspin, perfect) {
-    g.lastClear = { lines: n, tspin };
+  function scoreLock(n, spin, perfect) {
+    g.lastClear = { lines: n, spin };
     let points = 0;
     const parts = [];
-    if (tspin) {
+    if (spin === 'full') {
       points = TSPIN_SCORE[n] * g.level;
       parts.push(n ? 'T-SPIN ' + CLEAR_NAMES[n] : 'T-SPIN');
+    } else if (spin === 'mini') {
+      points = MINI_SCORE[Math.min(n, 2)] * g.level;
+      parts.push(n ? 'T-SPIN MINI ' + CLEAR_NAMES[n] : 'T-SPIN MINI');
     } else if (n > 0) {
       points = CLEAR_SCORE[n] * g.level;
       parts.push(CLEAR_NAMES[n]);
     }
     // back-to-back: consecutive "difficult" clears (tetris or T-spin with lines)
-    const difficult = n > 0 && (n === 4 || tspin);
+    const difficult = n > 0 && (n === 4 || spin !== null);
     if (difficult) {
       if (g.b2b) { points = Math.floor(points * 1.5); parts.unshift('B2B'); }
       g.b2b = true;
@@ -447,7 +466,7 @@ function newGame(rng = Math.random) {
 
   function lockPiece() {
     const c = g.cur;
-    const tspin = isTSpin();
+    const spin = tspinKind();
     stamp(g.board, c.name, c.rot, c.x, c.y);
     const cells = PIECES[c.name].states[c.rot];
     // Lock-out: every cell of the piece ended up in the hidden buffer.
@@ -459,7 +478,7 @@ function newGame(rng = Math.random) {
     }
     g.lockFlash = { cells: cells.map(([dx, dy]) => [c.x + dx, c.y + dy]), acc: 0 };
     const rows = fullRows(g.board);
-    scoreLock(rows.length, tspin, rows.length > 0 && emptyExcept(g.board, rows));
+    scoreLock(rows.length, spin, rows.length > 0 && emptyExcept(g.board, rows));
     if (rows.length > 0) {
       // Rows stay lit for CLEAR_FLASH ms; the collapse and next spawn wait.
       g.clearing = { rows, acc: 0 };
@@ -545,6 +564,10 @@ function newGame(rng = Math.random) {
     move(dir);
   }
 
+  function setPaused(v) {
+    if (!g.over) g.paused = v;
+  }
+
   // Abstract input: the DOM layer maps key codes to these names.
   function press(action) {
     const inp = g.input;
@@ -585,7 +608,7 @@ function newGame(rng = Math.random) {
   return {
     state: g,
     spawn, place, move, rotate, hardDrop, holdPiece, update, press, release,
-    ghostY, grounded, lockPiece, finishClear, tryMove, isTSpin,
+    ghostY, grounded, lockPiece, finishClear, tryMove, isTSpin, tspinKind, setPaused,
   };
 }
 
@@ -782,6 +805,17 @@ function mount(doc) {
       const gy = game.ghostY();
       if (gy !== c.y) drawPieceOnBoard(c.name, c.rot, c.x, gy, drawGhostCell);
       drawPieceOnBoard(c.name, c.rot, c.x, c.y, drawCell);
+      // lock pulse: a resting piece brightens toward white as the lock
+      // timer runs out, so the player can see it about to settle (agent-5)
+      if (game.grounded() && g.lockAcc > 0) {
+        const a = 0.35 * Math.min(1, g.lockAcc / LOCK_DELAY);
+        drawPieceOnBoard(c.name, c.rot, c.x, c.y, (cc, px, py, _color, size) => {
+          cc.globalAlpha = a;
+          cc.fillStyle = '#fff';
+          cc.fillRect(px, py, size, size);
+          cc.globalAlpha = 1;
+        });
+      }
     }
 
     renderHud();
@@ -820,9 +854,14 @@ function mount(doc) {
 
   window.addEventListener('keydown', onKeyDown);
   window.addEventListener('keyup', onKeyUp);
-  // Losing focus (alt-tab) must not leave a direction stuck down.
-  window.addEventListener('blur', () => {
+  // Losing focus (alt-tab) must not leave a direction stuck down, and a game
+  // nobody is looking at should not keep falling (agent-1, agent-5).
+  function releaseAll() {
     game.release('left'); game.release('right'); game.release('down');
+  }
+  window.addEventListener('blur', () => { releaseAll(); game.setPaused(true); });
+  doc.addEventListener('visibilitychange', () => {
+    if (doc.hidden) { releaseAll(); game.setPaused(true); }
   });
 
   // -------------------------------------------------------------------------

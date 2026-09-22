@@ -1,7 +1,7 @@
 # Tetris, agent-3
 
 Open `index.html`. Plain HTML, CSS and one JavaScript file, no build step.
-`node test.js` runs 42 checks against the engine without a browser.
+`node test.js` runs 52 checks against the engine without a browser.
 
     ← →        move (held: DAS 170 ms, then ARR 40 ms)
     ↑ / X      rotate clockwise        Z / Ctrl   rotate counter-clockwise
@@ -44,8 +44,9 @@ Rotating tries the five kick offsets from the JLSTZ or I table for the
 pre-flipped to y-down so they add straight to the piece origin.
 
 T-spins use the three-corner rule: a T that arrived by rotation and has at
-least three of its four diagonal corners filled (walls count) is a spin.
-Mini T-spins are not distinguished.
+least three of its four diagonal corners filled (walls count) is a spin. It
+is a full spin when both corners on the side the T points at are filled, or
+when it arrived via the fifth kick; otherwise it is a mini.
 
 ### Timing
 
@@ -57,8 +58,9 @@ has to know.
 
 - Gravity follows the guideline curve, `(0.8 - 0.007 (L-1))^(L-1)` seconds
   per row. Soft drop is 20x gravity.
-- Lock delay is 500 ms, reset by a successful move or rotate up to 15 times
-  per piece. After that the piece locks whatever you do.
+- Lock delay is 500 ms, reset by a successful move or rotate up to 15 times.
+  Reaching a new lowest row refreshes those 15, per guideline. A resting
+  piece brightens toward white as the timer runs out.
 - Full rows stay lit for 120 ms before collapsing. There is no active piece
   during that time, but a held direction keeps charging DAS so it carries
   into the next piece.
@@ -66,7 +68,7 @@ has to know.
 ### Scoring
 
 Guideline: 100/300/500/800 x level for 1 to 4 lines, T-spin 400/800/1200/1600
-x level, back-to-back tetris or T-spin at 1.5x, combo 50 x combo x level,
+x level, mini T-spin 100/200/400 x level, back-to-back tetris or T-spin at 1.5x, combo 50 x combo x level,
 perfect clear 800/1200/1800/2000 x level, +1 per soft-dropped row, +2 per
 hard-dropped row. Level is 1 + lines/10. Every scoring event surfaces as a
 fading toast over the board.
@@ -93,6 +95,15 @@ Every one of these is logged as an observation on branch `agent-3` in the
   I split `clearLines` into `fullRows` and `collapse` so scoring, combo,
   back-to-back and perfect clear are all decided at lock time from the row
   list, and the timer delays only the visual collapse and the next spawn.
+- **agent-6**: refreshing the 15 move-resets when the piece reaches a new
+  lowest row. Mine never refreshed, so a piece that wiggled 15 times and
+  then fell into a lower gap could not be adjusted at all.
+- **agent-5**: mini versus full T-spin grading with the fifth-kick upgrade,
+  and the lock-delay pulse. The kick index is recorded on the piece in
+  `rotate()`; the pulse is a white overlay capped at 35% so the colour stays
+  readable.
+- **agent-1** and **agent-5**: pausing on window blur and tab hide. My blur
+  handler only released held keys, so the game kept falling unwatched.
 - **agent-4** and **agent-9**: verifying in headless Chrome. Under
   `--virtual-time-budget` requestAnimationFrame fires once, so the probe
   page drives `update()` by hand and dispatches synthetic `KeyboardEvent`s,
@@ -105,12 +116,12 @@ the 4 hidden rows.
 
 ## What does not work
 
-- No mini T-spin distinction; every three-corner T-spin pays full.
+- No 180-degree rotation (agent-6 and agent-9 have it).
 - No touch controls. Keyboard only.
 - No sound, no high-score persistence.
 - Hold and next previews render piece state 0 centred in a fixed slot; the
   I and O previews sit a little lower than the others because their boxes
   are different sizes. Cosmetic.
-- The game is verified by 42 engine checks in node and one scripted
+- The game is verified by 52 engine checks in node and one scripted
   headless Chrome run. It has not been play-tested by a human in this
   session.
