@@ -38,6 +38,11 @@ get kicks that lift when they should drop. A on the keyboard is a 180 using
 the SRS+ table, six tests, the same for every piece; a piece that spawned
 backwards is one press from right.
 
+**Seed.** The bag is driven by mulberry32 seeded from the URL hash.
+`index.html#seed=2024` always deals the same pieces; a game started without a
+hash writes its own seed into the address bar. R deals a new seed, Shift+R
+replays the current one. `test.js` seeds by number and needs no RNG stub.
+
 **Loop.** One `requestAnimationFrame`. Gravity, DAS, ARR, lock delay and the
 line-clear flash are all millisecond accumulators against a `dt` clamped to
 100ms. Gravity per level is the guideline curve, `(0.8 - 0.007n)^n` seconds a
@@ -47,8 +52,10 @@ row. Level 1 is one row a second; level 10 is about sixteen.
 that refresh when the piece reaches a new lowest row. Direction keys are a
 stack: the newest press wins, and releasing it hands DAS to the older key
 already charged, since that key has by definition been held longer than DAS.
-OS key repeat is ignored. Losing the window or the tab pauses the game and
-drops every held key, so nothing auto-repeats into a wall when focus returns.
+OS key repeat is ignored. DAS keeps charging through the line-clear flash, so
+a direction held through a clear moves the next piece the moment it appears.
+Losing the window or the tab pauses the game and drops every held key, so
+nothing auto-repeats into a wall when focus returns.
 
 **Scoring.** Guideline. 100/300/500/800 times level for clears; T-spins
 400/800/1200/1600, minis 100/200/400; back-to-back tetris or T-spin 1.5x;
@@ -63,9 +70,12 @@ used the fifth kick, else mini.
 **Rendering.** Canvas 2D, full redraw each frame, backing store scaled by
 `devicePixelRatio`. The ghost is a 2px outline at 45% alpha, not a filled
 cell, so it never reads as a settled block. A grounded piece brightens toward
-white as its lock delay runs out. Full rows flash white for 140ms before they
-collapse; during the flash there is no active piece. The HUD is DOM and is
-written only when a value changes.
+white as its lock delay runs out. A hard drop leaves a streak down each
+column it fell through for 120ms. Full rows flash white for 140ms before they
+collapse; during the flash there is no active piece. The hold panel dims
+while hold is spent. The HUD is DOM and is written only when a value changes.
+Best score is kept in `localStorage` behind a try/catch, since `file://` and
+private windows may refuse it.
 
 ## What I took, from whom, and what I changed
 
@@ -76,14 +86,23 @@ written only when a value changes.
   `y < 0` as air and then dropped those cells at lock time, which is a silent
   data loss. Changed: `y < 0` is solid, uniform with the walls.
 - **agent-1**: lock-out (a piece settling entirely in the hidden rows ends the
-  game), the DPR-scaled canvas, and the held-direction stack. Changed: the
-  stack hands DAS over charged rather than restarting it.
+  game), the DPR-scaled canvas, the held-direction stack, the seeded bag in
+  the URL hash with Shift+R replay, and the guarded best score (agent-9 and
+  agent-10 have the same guard). Changed: the stack hands DAS over charged
+  rather than restarting it, and the seed is a parameter of `newGame()` in
+  the core rather than a global.
 - **agent-3**: the bottom-up `copyWithin` line-clear loop, the spawn-one-row-
   higher retry before block-out, change-only HUD writes, and shipping the
   tests in the repo.
-- **agent-5**: the three-corner T-spin rule with the fifth-kick upgrade, and
-  the lock-delay pulse. Changed: the spun flag is cleared by any successful
-  move, horizontal included, not only by a fall.
+- **agent-5**: the three-corner T-spin rule with the fifth-kick upgrade, the
+  lock-delay pulse, and the dimmed hold panel. Changed: the spun flag is
+  cleared by any successful move, horizontal included, not only by a fall;
+  the hold dim is a CSS class on the DOM panel, not canvas alpha.
+- **agent-7**: the hard-drop trail. Changed: the core records only the drop
+  span; the renderer works out the columns.
+- **agent-10**: DAS charging through the line-clear flash. They noticed every
+  game in the arena, this one included, restarted DAS from zero after a
+  clear.
 - **agent-2**: combo scoring and the last-event label for the HUD.
 - **agent-8**: the perfect-clear bonus and the 180 rotation with SRS+ kicks.
   Changed: the table is stored y-down like the others, and a 180 never claims
@@ -96,7 +115,6 @@ lowest-row lock reset, agent-7 the line-clear flash.
 
 - There is no touch or gamepad input.
 - The line-clear flash is a solid white bar; there is no per-cell animation.
-- No high score is stored.
 - `node test.js` covers the core only. `mount()` is checked by loading the
   page in headless Chrome and grepping for console errors, not by a test.
 

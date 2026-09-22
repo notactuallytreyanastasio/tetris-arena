@@ -11,8 +11,8 @@ function test(name, fn) {
   catch (e) { console.log('FAIL ' + name + '\n     ' + e.message); process.exitCode = 1; }
 }
 
-// Deterministic RNG so bag order is repeatable.
-function rng(seed) { let s = seed >>> 0; return () => { s = (s * 1664525 + 1013904223) >>> 0; return s / 2 ** 32; }; }
+// newGame(seed) is deterministic, so a number is all a test needs.
+const rng = seed => seed;
 const bot = T.ROWS - 1;
 function placeAt(g, name, x = 3, o = 0, y = T.HIDDEN_ROWS - 1) {
   const id = T.SHAPES.findIndex(s => s.name === name) + 1;
@@ -31,7 +31,7 @@ test('gravity curve: 1000ms at level 1, faster every level', () => {
   for (let l = 2; l <= 20; l++) assert.ok(T.gravityMs(l) < T.gravityMs(l - 1));
 });
 test('7-bag deals each piece exactly twice in 14', () => {
-  const bag = T.makeBag(rng(7)); const ids = []; for (let i = 0; i < 14; i++) ids.push(bag());
+  const bag = T.makeBag(T.mulberry32(7)); const ids = []; for (let i = 0; i < 14; i++) ids.push(bag());
   for (let id = 1; id <= 7; id++) assert.strictEqual(ids.filter(x => x === id).length, 2);
 });
 
@@ -192,6 +192,26 @@ test('180 from every orientation of every piece stays in bounds and lands two st
     assert.strictEqual(g.piece.o, (o + 2) % 4);
     for (const [cx, cy] of g.piece.shape.cells[g.piece.o]) assert.ok(g.piece.x + cx >= 0 && g.piece.x + cx < T.COLS && g.piece.y + cy >= 0);
   }
+});
+
+test('same seed deals the same first ten pieces; a different seed does not', () => {
+  const draw = seed => { const g = T.newGame(seed); const ids = [g.piece.id, ...g.queue]; while (ids.length < 10) { g.piece = null; T.spawn(g); ids.push(g.piece.id); } return ids.join(); };
+  assert.strictEqual(draw(2024), draw(2024)); assert.notStrictEqual(draw(2024), draw(2025));
+  assert.strictEqual(T.newGame(2024).seed, 2024);
+});
+test('DAS held through a line-clear flash is charged when the next piece appears', () => {
+  const g = T.newGame(rng(6)); row(g, bot, '#########.');
+  dropRight(g, 'I'); assert.ok(g.clearing);
+  T.press(g, 'left');                       // pressed during the flash, no piece to move
+  T.update(g, T.CLEAR_FLASH + 1);           // flash ends, piece spawns; DAS has had > DAS ms? no: CLEAR_FLASH < DAS
+  T.update(g, T.DAS - T.CLEAR_FLASH);       // total held = DAS + 1: first auto step happens now
+  assert.strictEqual(g.piece.x, 2, 'auto-shift fired without restarting DAS: x=' + g.piece.x);
+  T.update(g, T.ARR); assert.strictEqual(g.piece.x, 1);
+});
+test('hard-drop trail spans the fall and is gone after TRAIL_MS', () => {
+  const g = T.newGame(rng(3)); placeAt(g, 'O'); const y0 = g.piece.y; T.hardDrop(g);
+  assert.ok(g.trail); assert.strictEqual(g.trail.y0, y0); assert.strictEqual(g.trail.y1, bot - 1);
+  T.update(g, T.TRAIL_MS + 1); assert.strictEqual(g.trail, null);
 });
 
 // ---- M5

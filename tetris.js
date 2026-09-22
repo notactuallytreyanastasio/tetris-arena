@@ -27,6 +27,7 @@ const LOCK_DELAY = 500;
 const LOCK_RESETS = 15;
 const SOFT_DROP_FACTOR = 20;      // soft drop is this many times faster than gravity
 const CLEAR_FLASH = 140;          // ms the cleared rows stay lit before collapsing
+const TRAIL_MS = 120;             // ms the hard-drop trail lingers (idea from agent-7)
 const LINES_PER_LEVEL = 10;
 
 // Guideline scoring: base per clear count, times level. A tetris directly
@@ -125,6 +126,24 @@ function gravityMs(level) {
   return Math.pow(0.8 - n * 0.007, n) * 1000;
 }
 
+// mulberry32: a small seeded PRNG so a game is replayable from its seed
+// (taken from agent-1). The seed lives in the URL hash in the browser and is
+// a plain number in tests.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function freshSeed() {
+  return (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
+}
+
 // 7-bag randomizer: deal all seven pieces in a random order, then refill.
 // The longest possible wait for any piece is 12. Taken from agent-9; the
 // random source is injected so tests can be deterministic.
@@ -197,10 +216,11 @@ function fits(board, shape, px, py, o) {
 
 // ------------------------------------------------------------------- game
 
-function newGame(random = Math.random) {
+function newGame(seed = freshSeed()) {
   const g = {
+    seed: seed >>> 0,
     board: new Uint8Array(COLS * ROWS),
-    bag: makeBag(random),
+    bag: makeBag(mulberry32(seed)),
     queue: [],            // the next NEXT_COUNT piece ids, front is next
     hold: 0,              // piece id in the hold slot, 0 = empty
     holdUsed: false,      // hold already used for the current piece
@@ -215,6 +235,7 @@ function newGame(random = Math.random) {
     combo: -1,            // consecutive locks that cleared lines; -1 = none
     lastEvent: null,      // { label, points } of the last scoring clear, for the HUD
     clearing: null,       // { rows: [y...], timer: ms } while rows flash before collapsing
+    trail: null,          // { cells, x, y0, y1, timer } after a hard drop, for the renderer
 
     gravityAcc: 0,        // ms toward the next gravity step
     lockTimer: 0,         // ms the piece has been grounded
@@ -416,9 +437,12 @@ function tryRotate(g, dir) {
 
 function hardDrop(g) {
   if (!g.piece || g.over) return;
+  const p = g.piece;
+  const y0 = p.y;
   let rows = 0;
   while (tryMove(g, 0, 1)) rows++;
   g.score += rows * HARD_DROP_POINTS;
+  if (rows > 0) g.trail = { cells: p.shape.cells[p.o], x: p.x, y0, y1: p.y, timer: 0 };
   lock(g);
 }
 
@@ -466,29 +490,40 @@ function release(g, key) {
 // Advance the game by dt ms.
 function update(g, dt) {
   if (g.over || g.paused) return;
-  if (g.clearing) {
-    g.clearing.timer += dt;
-    if (g.clearing.timer >= CLEAR_FLASH) finishClear(g);
-    return;
-  }
-  if (!g.piece) return;
 
-  // Horizontal auto-repeat.
+  if (g.trail) {
+    g.trail.timer += dt;
+    if (g.trail.timer >= TRAIL_MS) g.trail = null;
+  }
+
+  // Horizontal auto-repeat. The accumulator runs even while rows flash and
+  // no piece exists, so a direction held through a line clear is already
+  // charged when the next piece appears (agent-10 found every arena game
+  // restarted DAS from zero here). Only the move itself needs a piece.
   const dir = activeDir(g);
   if (dir !== 0) {
     g.dasTimer += dt;
     if (!g.dasCharged && g.dasTimer >= DAS) {
       g.dasCharged = true;
       g.dasTimer -= DAS;
-      tryMove(g, dir, 0);
+      if (g.piece) tryMove(g, dir, 0);
     }
-    if (g.dasCharged) {
+    if (g.dasCharged && g.piece) {
       while (g.dasTimer >= ARR) {
         g.dasTimer -= ARR;
         if (!tryMove(g, dir, 0)) { g.dasTimer = 0; break; }
       }
     }
+    // Stay charged without banking repeats for the next piece.
+    if (g.dasCharged && !g.piece) g.dasTimer = Math.min(g.dasTimer, ARR);
   }
+
+  if (g.clearing) {
+    g.clearing.timer += dt;
+    if (g.clearing.timer >= CLEAR_FLASH) finishClear(g);
+    return;
+  }
+  if (!g.piece) return;
 
   // Gravity, or soft drop when down is held.
   let step = gravityMs(g.level);
@@ -514,7 +549,7 @@ function update(g, dt) {
 if (typeof module !== 'undefined') {
   module.exports = {
     COLS, ROWS, HIDDEN_ROWS, VISIBLE_ROWS, DAS, ARR, LOCK_DELAY, LOCK_RESETS,
-    CLEAR_FLASH, CLEAR_SCORE, LINES_PER_LEVEL,
+    CLEAR_FLASH, TRAIL_MS, CLEAR_SCORE, LINES_PER_LEVEL, mulberry32,
     SHAPES, COLORS, KICKS_JLSTZ, KICKS_I, KICKS_180, gravityMs, makeBag, cellAt, fits,
     clearFullRows, fullRows,
     NEXT_COUNT, TSPIN_SCORE, TSPIN_MINI_SCORE, COMBO_SCORE, PERFECT_CLEAR_SCORE,
@@ -548,23 +583,49 @@ function mount(doc, win) {
   const holdSize = fitCanvas(holdCanvas);
   const holdCtx = holdCanvas.getContext('2d');
   const eventEl = doc.getElementById('event');
+  const holdPanel = doc.getElementById('hold-panel');
   const hud = {
     score: doc.getElementById('score'),
     lines: doc.getElementById('lines'),
     level: doc.getElementById('level'),
+    best: doc.getElementById('best'),
+    seed: doc.getElementById('seed'),
   };
   const overlay = doc.getElementById('overlay');
   const overlayTitle = doc.getElementById('overlay-title');
   const overlayHint = doc.getElementById('overlay-hint');
-  let g = newGame();
+  // The seed lives in the URL hash so a game can be replayed or sent to
+  // someone: index.html#seed=2024 always deals the same pieces (agent-1).
+  function seedFromHash() {
+    const m = /seed=(\d+)/.exec(win.location.hash);
+    return m ? Number(m[1]) >>> 0 : undefined;
+  }
+  function start(seed) {
+    const game = newGame(seed);
+    if (win.location.hash !== '#seed=' + game.seed) {
+      try { win.history.replaceState(null, '', '#seed=' + game.seed); } catch (e) { /* file:// may refuse */ }
+    }
+    return game;
+  }
+  let g = start(seedFromHash());
+
+  // Best score lives in localStorage, which file:// and private windows may
+  // refuse; the game must not care (same guard as agent-1, 9 and 10).
+  const BEST_KEY = 'tetris-agent-6-best';
+  function loadBest() { try { return Number(win.localStorage.getItem(BEST_KEY)) || 0; } catch (e) { return 0; } }
+  function saveBest(n) { try { win.localStorage.setItem(BEST_KEY, String(n)); } catch (e) { /* ignore */ } }
+  let best = loadBest();
 
   // Only touch the DOM when a number changes; text writes are the one thing
   // here that costs layout.
-  const shown = { score: -1, lines: -1, level: -1, overlay: null, event: null, queue: '', hold: -1 };
+  const shown = { score: -1, lines: -1, level: -1, best: -1, seed: -1, overlay: null, event: null, queue: '', hold: -1, spent: null };
   function syncHud() {
-    for (const k of ['score', 'lines', 'level']) {
+    for (const k of ['score', 'lines', 'level', 'seed']) {
       if (shown[k] !== g[k]) { shown[k] = g[k]; hud[k].textContent = String(g[k]); }
     }
+    if (g.score > best) { best = g.score; saveBest(best); }
+    if (shown.best !== best) { shown.best = best; hud.best.textContent = String(best); }
+    if (shown.spent !== g.holdUsed) { shown.spent = g.holdUsed; holdPanel.classList.toggle('spent', g.holdUsed); }
     if (shown.event !== g.lastEvent) {
       shown.event = g.lastEvent;
       eventEl.textContent = g.lastEvent ? `${g.lastEvent.label}  +${g.lastEvent.points}` : '';
@@ -665,6 +726,30 @@ function mount(doc, win) {
       }
     }
 
+    // Hard-drop trail: a streak fading in down each column the piece fell
+    // through, gone after TRAIL_MS (agent-7's idea).
+    const tr = g.trail;
+    if (tr) {
+      const alpha = 0.35 * (1 - tr.timer / TRAIL_MS);
+      const cols = new Map();
+      for (const [cx, cy] of tr.cells) {
+        const c = cols.get(cx);
+        cols.set(cx, c ? [Math.min(c[0], cy), Math.max(c[1], cy)] : [cy, cy]);
+      }
+      ctx.globalAlpha = alpha;
+      for (const [cx, [top, bottom]] of cols) {
+        const yStart = (tr.y0 + top - HIDDEN_ROWS) * CELL;
+        const yEnd = (tr.y1 + bottom - HIDDEN_ROWS) * CELL;
+        if (yEnd <= 0) continue;
+        const grad = ctx.createLinearGradient(0, Math.max(yStart, 0), 0, yEnd);
+        grad.addColorStop(0, 'rgba(255,255,255,0)');
+        grad.addColorStop(1, '#ffffff');
+        ctx.fillStyle = grad;
+        ctx.fillRect((tr.x + cx) * CELL + 1, Math.max(yStart, 0), CELL - 2, yEnd - Math.max(yStart, 0));
+      }
+      ctx.globalAlpha = 1;
+    }
+
     // Rows about to collapse flash white, fading over CLEAR_FLASH.
     if (g.clearing) {
       const a = 1 - g.clearing.timer / CLEAR_FLASH;
@@ -684,7 +769,8 @@ function mount(doc, win) {
     KeyP: 'pause', Escape: 'pause',
   };
   doc.addEventListener('keydown', e => {
-    if (e.code === 'KeyR') { g = newGame(); return; }
+    // R deals a new seed; Shift+R replays the current one (agent-1).
+    if (e.code === 'KeyR') { g = start(e.shiftKey ? g.seed : undefined); return; }
     const key = KEYMAP[e.code];
     if (!key) return;
     e.preventDefault();
