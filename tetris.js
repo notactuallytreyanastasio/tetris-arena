@@ -164,8 +164,13 @@ function gravityFor(level) {
   return Math.pow(0.8 - l * 0.007, l) * 1000;
 }
 
+const NEXT_COUNT = 3;
+
 const state = {
   piece: null,       // { id, r, x, y, lowestY, resets, spun, kick }
+  queue: [],         // upcoming piece ids, NEXT_COUNT long
+  hold: 0,           // parked piece id, 0 = none
+  holdUsed: false,   // hold allowed once per piece
   fallAcc: 0,        // ms accumulated toward the next gravity step
   lockAcc: 0,        // ms the piece has been resting on something
   clearing: null,    // { rows: [y...], t } while full rows flash
@@ -182,6 +187,9 @@ function reset() {
   board.fill(0);
   bag = [];
   state.piece = null;
+  state.queue = [];
+  state.hold = 0;
+  state.holdUsed = false;
   state.fallAcc = 0;
   state.lockAcc = 0;
   state.clearing = null;
@@ -196,8 +204,15 @@ function reset() {
 // Held keys. dir is -1/0/+1 for the direction currently auto-shifting.
 const input = { dir: 0, dasAcc: 0, dasCharged: false, soft: false };
 
-function spawn() {
-  const id = nextFromBag();
+function takeNext() {
+  while (state.queue.length <= NEXT_COUNT) state.queue.push(nextFromBag());
+  return state.queue.shift();
+}
+
+// Spawn the next queued piece, or a specific one when coming out of hold.
+function spawn(forcedId) {
+  const id = forcedId || takeNext();
+  if (!forcedId) state.holdUsed = false;
   const p = { id, r: 0, x: SPAWN_X[id], y: 0, lowestY: 0, resets: 0, spun: false, kick: 0 };
   if (!fits(id, 0, p.x, p.y)) { state.over = true; return; }
   // Guideline: drop one row immediately if the way is clear, so the piece
@@ -339,6 +354,23 @@ function hardDrop() {
   lockNow();
 }
 
+function hold() {
+  const p = state.piece;
+  if (!p || state.holdUsed) return false;
+  const parked = state.hold;
+  state.hold = p.id;
+  state.holdUsed = true;
+  if (parked) spawn(parked); else spawn(takeNext());
+  return true;
+}
+
+// Row the piece would land on if hard-dropped. Used for the ghost.
+function ghostY(p) {
+  let y = p.y;
+  while (fits(p.id, p.r, p.x, y + 1)) y++;
+  return y;
+}
+
 function update(dt) {
   if (state.over) return;
 
@@ -412,6 +444,7 @@ document.addEventListener('keydown', (e) => {
     case 'ArrowUp': case 'KeyX': tryRotate(+1); break;
     case 'KeyZ': case 'ControlLeft': case 'ControlRight': tryRotate(-1); break;
     case 'Space': hardDrop(); break;
+    case 'KeyC': case 'ShiftLeft': case 'ShiftRight': hold(); break;
     default: return;
   }
   e.preventDefault();
@@ -432,8 +465,12 @@ window.addEventListener('blur', () => { input.dir = 0; input.soft = false; });
 // Rendering
 // ---------------------------------------------------------------------------
 
-const boardCanvas = document.getElementById('board');
-const ctx = setupCanvas(boardCanvas, W * CELL, VISIBLE * CELL);
+const MINI = 24;   // cell size in the hold / next panels
+const SLOT = 120;  // each panel slot is SLOT x SLOT css px
+
+const ctx = setupCanvas(document.getElementById('board'), W * CELL, VISIBLE * CELL);
+const holdCtx = setupCanvas(document.getElementById('hold'), SLOT, SLOT);
+const nextCtx = setupCanvas(document.getElementById('next'), SLOT, SLOT * NEXT_COUNT);
 
 function setupCanvas(canvas, cssW, cssH) {
   const dpr = window.devicePixelRatio || 1;
@@ -457,6 +494,44 @@ function drawCell(c, x, y, color, size) {
   c.fillStyle = 'rgba(0,0,0,0.28)';
   c.fillRect(px, py + size - 2, size, 2);
   c.fillRect(px + size - 2, py, 2, size);
+}
+
+function drawGhostCell(c, x, y, color, size) {
+  c.strokeStyle = color;
+  c.lineWidth = 2;
+  c.strokeRect(x * size + 2, y * size + 2, size - 4, size - 4);
+}
+
+// Mix a hex colour toward white by t in [0,1].
+function lighten(hex, t) {
+  const n = parseInt(hex.slice(1), 16);
+  const r = n >> 16, g = (n >> 8) & 255, b = n & 255;
+  const f = (v) => Math.round(v + (255 - v) * t);
+  return `rgb(${f(r)},${f(g)},${f(b)})`;
+}
+
+// Draw a piece in state 0 centred in a SLOT x SLOT box at slot index i.
+function drawMini(c, id, i, dim) {
+  const cells = SHAPES[id][0];
+  let minX = 9, maxX = -1, minY = 9, maxY = -1;
+  for (const [x, y] of cells) {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+  }
+  const w = (maxX - minX + 1) * MINI, h = (maxY - minY + 1) * MINI;
+  const ox = (SLOT - w) / 2, oy = i * SLOT + (SLOT - h) / 2;
+  c.save();
+  c.translate(ox - minX * MINI, oy - minY * MINI);
+  if (dim) c.globalAlpha = 0.35;
+  for (const [x, y] of cells) drawCell(c, x, y, COLORS[id], MINI);
+  c.restore();
+}
+
+function drawPanels() {
+  holdCtx.clearRect(0, 0, SLOT, SLOT);
+  if (state.hold) drawMini(holdCtx, state.hold, 0, state.holdUsed);
+  nextCtx.clearRect(0, 0, SLOT, SLOT * NEXT_COUNT);
+  for (let i = 0; i < NEXT_COUNT && i < state.queue.length; i++) drawMini(nextCtx, state.queue[i], i, false);
 }
 
 function draw() {
@@ -483,14 +558,26 @@ function draw() {
     }
   }
 
-  // active piece
+  // ghost, then the active piece on top. While the piece rests on the
+  // stack it brightens as the lock delay runs out, so the lock is not a
+  // surprise.
   const p = state.piece;
   if (p) {
+    const gy = ghostY(p);
+    if (gy !== p.y) {
+      for (const [cx, cy] of SHAPES[p.id][p.r]) {
+        const y = gy + cy - HIDDEN;
+        if (y >= 0) drawGhostCell(ctx, p.x + cx, y, COLORS[p.id], CELL);
+      }
+    }
+    const t = gy === p.y ? Math.min(state.lockAcc / LOCK_DELAY, 1) : 0;
+    const color = t > 0 ? lighten(COLORS[p.id], t * 0.6) : COLORS[p.id];
     for (const [cx, cy] of SHAPES[p.id][p.r]) {
       const y = p.y + cy - HIDDEN;
-      if (y >= 0) drawCell(ctx, p.x + cx, y, COLORS[p.id], CELL);
+      if (y >= 0) drawCell(ctx, p.x + cx, y, color, CELL);
     }
   }
+  drawPanels();
 }
 
 // HUD. Writing textContent every frame forces layout for nothing, so each
