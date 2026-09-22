@@ -32,7 +32,11 @@ const LINES_PER_LEVEL = 10;
 // Guideline scoring: base per clear count, times level. A tetris directly
 // after another tetris (no non-tetris clear between) pays 1.5x.
 const CLEAR_SCORE = [0, 100, 300, 500, 800];
-const BACK_TO_BACK = 1.5;
+const TSPIN_SCORE = [400, 800, 1200, 1600];   // by lines cleared, 0..3
+const TSPIN_MINI_SCORE = [100, 200, 400];     // 0..2
+const COMBO_SCORE = 50;                       // x combo count x level, per consecutive clearing lock
+const BACK_TO_BACK = 1.5;                     // tetris or T-spin clear after another such clear
+const NEXT_COUNT = 5;                         // pieces shown in the preview
 const SOFT_DROP_POINTS = 1;       // per row
 const HARD_DROP_POINTS = 2;       // per row
 
@@ -174,14 +178,19 @@ function fits(board, shape, px, py, o) {
 function newGame(random = Math.random) {
   const g = {
     board: new Uint8Array(COLS * ROWS),
-    nextId: makeBag(random),
-    piece: null,          // { id, shape, x, y, o }
+    bag: makeBag(random),
+    queue: [],            // the next NEXT_COUNT piece ids, front is next
+    hold: 0,              // piece id in the hold slot, 0 = empty
+    holdUsed: false,      // hold already used for the current piece
+    piece: null,          // { id, shape, x, y, o, lowestY, spun, kick }
     over: false,
 
     score: 0,
     lines: 0,
     level: 1,
-    lastClearWasTetris: false,
+    backToBack: false,    // last clear was a tetris or a T-spin
+    combo: -1,            // consecutive locks that cleared lines; -1 = none
+    lastEvent: null,      // { label, points } of the last scoring clear, for the HUD
     clearing: null,       // { rows: [y...], timer: ms } while rows flash before collapsing
 
     gravityAcc: 0,        // ms toward the next gravity step
@@ -195,17 +204,23 @@ function newGame(random = Math.random) {
     dasTimer: 0,          // ms since dasDir was pressed (or since last ARR step)
     dasCharged: false,    // past the DAS threshold, now in ARR
   };
+  while (g.queue.length < NEXT_COUNT) g.queue.push(g.bag());
   spawn(g);
   return g;
 }
 
-function spawn(g) {
-  const id = g.nextId();
+// Put a specific piece id into play at the spawn position. Returns false on
+// block-out (and sets g.over).
+function spawn(g, id = null) {
+  if (id === null) {
+    id = g.queue.shift();
+    g.queue.push(g.bag());
+  }
   const shape = SHAPES[id - 1];
   // Center the bounding box: 3-wide boxes at x=3 (cells 3..5), the I's 4-wide
   // box also at x=3 (cells 3..6). The box top sits two rows above the
   // skyline so the piece's lowest row is the last hidden row.
-  const piece = { id, shape, x: 3, y: HIDDEN_ROWS - 2, o: 0 };
+  const piece = { id, shape, x: 3, y: HIDDEN_ROWS - 2, o: 0, lowestY: 0, spun: false, kick: 0 };
   if (!fits(g.board, shape, piece.x, piece.y, piece.o)) {
     // Block-out. Try one row higher first so a nearly-full board gets one
     // more piece (agent-3 does this too).
@@ -213,21 +228,60 @@ function spawn(g) {
     if (!fits(g.board, shape, piece.x, piece.y, piece.o)) {
       g.over = true;
       g.piece = null;
-      return;
+      return false;
     }
   }
   // Guideline: a fresh piece drops one row immediately if it can, so its
   // bottom row is visible the frame it appears.
   if (fits(g.board, shape, piece.x, piece.y + 1, piece.o)) piece.y++;
+  piece.lowestY = piece.y;
   g.piece = piece;
+  g.holdUsed = false;
   g.gravityAcc = 0;
   g.lockTimer = 0;
   g.lockResets = 0;
   g.grounded = false;
+  return true;
+}
+
+// Swap the falling piece with the hold slot, once per piece. The held piece
+// comes back in its spawn orientation at the spawn position.
+function holdPiece(g) {
+  if (!g.piece || g.holdUsed || g.over) return false;
+  const swapOut = g.piece.id;
+  const swapIn = g.hold;
+  g.hold = swapOut;
+  if (swapIn) spawn(g, swapIn); else spawn(g);
+  g.holdUsed = true;
+  return true;
+}
+
+// Row the piece would land on if dropped straight down. The ghost is drawn there.
+function ghostY(g) {
+  const p = g.piece;
+  let y = p.y;
+  while (fits(g.board, p.shape, p.x, y + 1, p.o)) y++;
+  return y;
+}
+
+// T-spin test, the 3-corner rule (taken from agent-5). The last maneuver
+// must have been a rotation, and at least three of the four diagonal corners
+// of the T's 3x3 box must be solid. It is a full T-spin if both corners on
+// the side the T points to are solid, or the rotation used the fifth kick;
+// otherwise it is a mini. Returns null, 'mini' or 'full'.
+function tspinKind(g, p) {
+  if (p.shape.name !== 'T' || !p.spun) return null;
+  const cx = p.x + 1, cy = p.y + 1;
+  const tl = !!cellAt(g.board, cx - 1, cy - 1), tr = !!cellAt(g.board, cx + 1, cy - 1);
+  const bl = !!cellAt(g.board, cx - 1, cy + 1), br = !!cellAt(g.board, cx + 1, cy + 1);
+  if (tl + tr + bl + br < 3) return null;
+  const front = [[tl, tr], [tr, br], [bl, br], [tl, bl]][p.o];
+  return (front[0] && front[1]) || p.kick === 4 ? 'full' : 'mini';
 }
 
 function lock(g) {
   const p = g.piece;
+  const spin = tspinKind(g, p);
   let anyVisible = false;
   for (const [cx, cy] of p.shape.cells[p.o]) {
     const y = p.y + cy;
@@ -240,21 +294,37 @@ function lock(g) {
   if (!anyVisible) { g.over = true; return; }
 
   const rows = fullRows(g.board);
+  // Scoring happens now, at lock, because a T-spin with zero lines still
+  // pays and the spin state is only known here.
+  award(g, rows.length, spin);
   if (rows.length === 0) { spawn(g); return; }
   // Rows flash for CLEAR_FLASH ms before they collapse; update() finishes it.
   g.clearing = { rows, timer: 0 };
 }
 
+function award(g, n, spin) {
+  let points, label;
+  if (spin === 'full') { points = TSPIN_SCORE[n]; label = 'T-spin ' + ['', 'single', 'double', 'triple'][n]; }
+  else if (spin === 'mini') { points = TSPIN_MINI_SCORE[Math.min(n, 2)]; label = 'Mini T-spin ' + ['', 'single', 'double'][Math.min(n, 2)]; }
+  else { points = CLEAR_SCORE[n]; label = ['', 'Single', 'Double', 'Triple', 'Tetris'][n]; }
+  points *= g.level;
+  if (n > 0) {
+    const difficult = n === 4 || spin !== null;
+    if (difficult && g.backToBack) { points = Math.floor(points * BACK_TO_BACK); label = 'B2B ' + label; }
+    g.backToBack = difficult;
+    g.combo++;
+    if (g.combo > 0) { points += COMBO_SCORE * g.combo * g.level; label += ' x' + (g.combo + 1); }
+    g.lines += n;
+    g.level = 1 + Math.floor(g.lines / LINES_PER_LEVEL);
+  } else {
+    g.combo = -1;
+  }
+  if (points > 0) { g.score += points; g.lastEvent = { label: label.trim(), points }; }
+}
+
 function finishClear(g) {
-  const n = clearFullRows(g.board);
+  clearFullRows(g.board);
   g.clearing = null;
-  const tetris = n === 4;
-  let points = CLEAR_SCORE[n] * g.level;
-  if (tetris && g.lastClearWasTetris) points = Math.floor(points * BACK_TO_BACK);
-  g.lastClearWasTetris = tetris;
-  g.score += points;
-  g.lines += n;
-  g.level = 1 + Math.floor(g.lines / LINES_PER_LEVEL);
   spawn(g);
 }
 
@@ -264,7 +334,14 @@ function tryMove(g, dx, dy) {
   const p = g.piece;
   if (!p || !fits(g.board, p.shape, p.x + dx, p.y + dy, p.o)) return false;
   p.x += dx; p.y += dy;
+  p.spun = false;                 // a T-spin needs the rotation to be the last maneuver
   if (dx !== 0) noteLockReset(g);
+  if (p.y > p.lowestY) {
+    // Guideline: reaching a new lowest row refreshes the reset budget, so
+    // a piece that falls further after wiggling is not stuck with none.
+    p.lowestY = p.y;
+    g.lockResets = 0;
+  }
   return true;
 }
 
@@ -280,10 +357,15 @@ function tryRotate(g, dir) {
   const p = g.piece;
   if (!p) return false;
   const to = (p.o + dir + 4) % 4;
-  for (const [kx, ky] of kicksFor(p.shape, p.o, to)) {
+  const kicks = kicksFor(p.shape, p.o, to);
+  for (let i = 0; i < kicks.length; i++) {
+    const [kx, ky] = kicks[i];
     if (fits(g.board, p.shape, p.x + kx, p.y + ky, to)) {
       p.x += kx; p.y += ky; p.o = to;
+      p.spun = true;
+      p.kick = i;
       noteLockReset(g);
+      if (p.y > p.lowestY) { p.lowestY = p.y; g.lockResets = 0; }
       return true;
     }
   }
@@ -317,6 +399,7 @@ function press(g, key) {
     case 'cw': tryRotate(g, 1); break;
     case 'ccw': tryRotate(g, -1); break;
     case 'hard': hardDrop(g); break;
+    case 'hold': holdPiece(g); break;
   }
 }
 
@@ -390,7 +473,9 @@ if (typeof module !== 'undefined') {
     CLEAR_FLASH, CLEAR_SCORE, LINES_PER_LEVEL,
     SHAPES, COLORS, KICKS_JLSTZ, KICKS_I, gravityMs, makeBag, cellAt, fits,
     clearFullRows, fullRows,
-    newGame, spawn, lock, finishClear, tryMove, tryRotate, hardDrop, press, release, update,
+    NEXT_COUNT, TSPIN_SCORE, TSPIN_MINI_SCORE, COMBO_SCORE,
+    newGame, spawn, lock, finishClear, tryMove, tryRotate, hardDrop, holdPiece, ghostY, tspinKind,
+    press, release, update,
   };
 }
 
@@ -399,6 +484,11 @@ if (typeof module !== 'undefined') {
 function mount(doc) {
   const boardCanvas = doc.getElementById('board');
   const ctx = boardCanvas.getContext('2d');
+  const nextCanvas = doc.getElementById('next');
+  const nextCtx = nextCanvas.getContext('2d');
+  const holdCanvas = doc.getElementById('hold');
+  const holdCtx = holdCanvas.getContext('2d');
+  const eventEl = doc.getElementById('event');
   const hud = {
     score: doc.getElementById('score'),
     lines: doc.getElementById('lines'),
@@ -411,11 +501,18 @@ function mount(doc) {
 
   // Only touch the DOM when a number changes; text writes are the one thing
   // here that costs layout.
-  const shown = { score: -1, lines: -1, level: -1, over: null };
+  const shown = { score: -1, lines: -1, level: -1, over: null, event: null, queue: '', hold: -1 };
   function syncHud() {
     for (const k of ['score', 'lines', 'level']) {
       if (shown[k] !== g[k]) { shown[k] = g[k]; hud[k].textContent = String(g[k]); }
     }
+    if (shown.event !== g.lastEvent) {
+      shown.event = g.lastEvent;
+      eventEl.textContent = g.lastEvent ? `${g.lastEvent.label}  +${g.lastEvent.points}` : '';
+    }
+    const q = g.queue.join(',');
+    if (shown.queue !== q) { shown.queue = q; drawPreview(nextCtx, nextCanvas, g.queue); }
+    if (shown.hold !== g.hold) { shown.hold = g.hold; drawPreview(holdCtx, holdCanvas, g.hold ? [g.hold] : []); }
     if (shown.over !== g.over) {
       shown.over = g.over;
       overlay.classList.toggle('hidden', !g.over);
@@ -433,6 +530,35 @@ function mount(doc) {
     c.fillStyle = 'rgba(0,0,0,0.25)';
     c.fillRect(x + 1, y + size - 4, size - 2, 3);
     c.fillRect(x + size - 4, y + 1, 3, size - 2);
+  }
+
+  // Draw an outlined cell for the ghost: the same footprint, no fill, so it
+  // never reads as a settled block.
+  function drawGhostCell(c, x, y, color) {
+    c.strokeStyle = color;
+    c.lineWidth = 2;
+    c.globalAlpha = 0.45;
+    c.strokeRect(x + 2, y + 2, CELL - 4, CELL - 4);
+    c.globalAlpha = 1;
+  }
+
+  // Preview canvases: each piece in a 4x4 box, centered on its bounding box,
+  // at a smaller cell size so five fit in the next column.
+  function drawPreview(c, canvas, ids) {
+    const size = 24;
+    const slot = canvas.height / NEXT_COUNT;
+    c.fillStyle = '#0e0f13';
+    c.fillRect(0, 0, canvas.width, canvas.height);
+    ids.forEach((id, i) => {
+      const shape = SHAPES[id - 1];
+      const cells = shape.cells[0];
+      let minX = 9, maxX = -1, minY = 9, maxY = -1;
+      for (const [cx, cy] of cells) { minX = Math.min(minX, cx); maxX = Math.max(maxX, cx); minY = Math.min(minY, cy); maxY = Math.max(maxY, cy); }
+      const pw = (maxX - minX + 1) * size, ph = (maxY - minY + 1) * size;
+      const ox = (canvas.width - pw) / 2;
+      const oy = (ids.length === 1 ? (canvas.height - ph) / 2 : i * slot + (slot - ph) / 2);
+      for (const [cx, cy] of cells) drawCell(c, ox + (cx - minX) * size, oy + (cy - minY) * size, COLORS[id], size);
+    });
   }
 
   function render() {
@@ -454,6 +580,13 @@ function mount(doc) {
 
     const p = g.piece;
     if (p) {
+      const gy = ghostY(g);
+      if (gy !== p.y) {
+        for (const [cx, cy] of p.shape.cells[p.o]) {
+          const y = gy + cy - HIDDEN_ROWS;
+          if (y >= 0) drawGhostCell(ctx, (p.x + cx) * CELL, y * CELL, COLORS[p.id]);
+        }
+      }
       for (const [cx, cy] of p.shape.cells[p.o]) {
         const y = p.y + cy - HIDDEN_ROWS;
         if (y >= 0) drawCell(ctx, (p.x + cx) * CELL, y * CELL, COLORS[p.id]);
@@ -475,6 +608,7 @@ function mount(doc) {
   const KEYMAP = {
     ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down',
     ArrowUp: 'cw', KeyX: 'cw', KeyZ: 'ccw', Space: 'hard',
+    KeyC: 'hold', ShiftLeft: 'hold', ShiftRight: 'hold',
   };
   doc.addEventListener('keydown', e => {
     if (e.code === 'KeyR') { g = newGame(); return; }
