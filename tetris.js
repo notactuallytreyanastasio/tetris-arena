@@ -400,6 +400,10 @@ function update(dt) {
       if (board.every((v) => v === 0)) state.score += SCORE.perfect[n] * state.level;
       spawn();
     }
+    // Keep charging DAS while the rows flash, capped at one full charge, so
+    // a direction held through a clear moves the next piece on its first
+    // frame instead of waiting a fresh DAS. (Hitch spotted by agent-10.)
+    if (input.dir !== 0 && !input.dasCharged) input.dasAcc = Math.min(input.dasAcc + dt, DAS);
     return;
   }
 

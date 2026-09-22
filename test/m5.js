@@ -43,5 +43,18 @@ row(H-1, 'XXXXXXXXX.'); row(H-2, 'X.........'); setPiece(I, 1, 7, H-5);
 const sq = state.score; hardDrop(); update(200);
 check('no bonus with leftover cell', state.score - sq === 100 + 2, String(state.score - sq));
 
+// DAS charges through the clear flash: right held before the drop, the new piece moves within 60ms of spawning
+reset(); board.fill(0);
+row(H-1, 'XXX....XXX'); setPiece(I, 0, 3, H-3);
+key('ArrowRight');                       // tap moves I to x=4? no: cols 4..7 would overlap... I state 0 at x=3 spans 3..6; row H-2 free so move ok
+state.piece.x = 3;                       // put it back over the gap, keep the direction held
+hardDrop();                              // clears row H-1, enters flash
+check('flash running with dir held', state.clearing !== null && api.input.dir === 1);
+update(120);                             // flash ends, next piece spawns
+const nx = state.piece.x;
+update(60);                              // 120 + 60 >= DAS 170: first shift should have fired
+check('DAS charged during flash', state.piece.x === nx + 1, `${nx} -> ${state.piece.x}`);
+listeners.keyup({ code: 'ArrowRight' });
+
 console.log(fails ? `${fails} FAILURES` : 'ALL OK');
 process.exit(fails ? 1 : 0);
