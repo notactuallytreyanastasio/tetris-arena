@@ -84,6 +84,23 @@ function makeRenderer({ well, hold, next }) {
     ctx.stroke();
   }
 
+  // Fading streak down each column a hard drop just passed through
+  // (agent-4). Drawn under the piece so the landing block stays crisp.
+  function drawTrail(game) {
+    const t = game.trail;
+    if (!t) return;
+    const life = t.ms / TRAIL_MS;
+    for (const [x, fromY, toY] of t.cols) {
+      const y0 = Math.max(fromY - HIDDEN_ROWS, 0), y1 = toY - HIDDEN_ROWS;
+      if (y1 <= y0) continue;
+      const grad = ctx.createLinearGradient(0, y0 * CELL, 0, y1 * CELL);
+      grad.addColorStop(0, 'rgba(255,255,255,0)');
+      grad.addColorStop(1, `rgba(255,255,255,${0.35 * life})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(x * CELL + 4, y0 * CELL, CELL - 8, (y1 - y0) * CELL);
+    }
+  }
+
   function drawWell(game) {
     ctx.fillStyle = '#0d0f14';
     ctx.fillRect(0, 0, W, H);
@@ -97,6 +114,8 @@ function makeRenderer({ well, hold, next }) {
         if (id) drawCell(x, y, flashing && flashing.has(y) ? '#ffffff' : COLORS[id]);
       }
     }
+
+    drawTrail(game);
 
     if (game.piece) {
       const color = PIECES[game.piece.type].color;

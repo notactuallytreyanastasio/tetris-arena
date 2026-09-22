@@ -237,5 +237,22 @@ function fakeTarget() {
   check('reset without a seed deals a new one', new Game().seed !== new Game().seed || true, true);
 }
 
+// --- hard-drop trail -------------------------------------------------------
+{
+  const g = fresh(['O', 'O', 'O', 'O', 'O', 'O', 'O', 'O']);
+  const y0 = g.piece.y;
+  g.hardDrop();
+  check('hard drop leaves one streak per column', g.trail.cols.map(([x]) => x), [4, 5]);
+  check('streak runs from the start row to the landing row', g.trail.cols[0].slice(1), [y0, B - 2]);
+  g.update(100);
+  check('streak is still alive at 100ms', g.trail !== null, true);
+  g.update(30);
+  check('streak expires after 120ms', g.trail, null);
+  const g2 = fresh(['O', 'O', 'O', 'O', 'O', 'O', 'O', 'O']);
+  while (g2.tryMove(0, 1)) { /* already on the floor */ }
+  g2.hardDrop();
+  check('no streak for a zero-row drop', g2.trail, null);
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

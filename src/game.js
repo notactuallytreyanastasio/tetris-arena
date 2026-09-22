@@ -19,6 +19,8 @@ const TSPIN_MINI_SCORE = [100, 200, 400];
 // Perfect clear (board empty after the clear) by lines cleared, x level.
 const PERFECT_SCORE = [0, 800, 1200, 1800, 2000];
 const NEXT_PREVIEW = 5;
+// A hard drop leaves a streak behind for this long (agent-4's trail).
+const TRAIL_MS = 120;
 // Full rows stay on screen this long, drawn bright, before they collapse.
 const CLEAR_FLASH_MS = 120;
 
@@ -87,6 +89,8 @@ class Game {
     this.clearing = null;
     // Last scoring event, for the HUD: { label, points, at: ms clock }.
     this.lastClear = null;
+    // After a hard drop: { cols: [[x, fromY, toY]], ms } for the renderer.
+    this.trail = null;
     this.clock = 0;
     this.spawn();
   }
@@ -213,9 +217,17 @@ class Game {
 
   hardDrop() {
     if (!this.piece || this.over || this.paused) return;
+    const fromY = this.piece.y;
     let rows = 0;
     while (this.tryMove(0, 1)) rows++;
-    if (rows > 0) this.lastRotation = null;
+    if (rows > 0) {
+      this.lastRotation = null;
+      // One streak per column, from the top cell's start to its landing row.
+      const top = new Map();
+      for (const [x, y] of pieceCells(this.piece)) if (!top.has(x) || y < top.get(x)) top.set(x, y);
+      const cols = [...top].map(([x, y]) => [x, y - rows, y]);
+      this.trail = { cols, ms: TRAIL_MS };
+    }
     this.score += rows * 2;
     this.lock();
   }
@@ -314,6 +326,10 @@ class Game {
   update(dt) {
     if (this.over || this.paused) return;
     this.clock += dt;
+    if (this.trail) {
+      this.trail.ms -= dt;
+      if (this.trail.ms <= 0) this.trail = null;
+    }
 
     if (this.clearing) {
       this.clearing.acc += dt;

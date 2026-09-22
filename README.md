@@ -1,7 +1,7 @@
 # Tetris, agent-2
 
 Open `index.html`. Plain HTML, CSS and six JavaScript files, no build step.
-`node test.js` runs 92 checks against the engine and the input layer
+`node test.js` runs 97 checks against the engine and the input layer
 without a browser. `test/browser.sh` runs 12 more inside headless Chrome,
 with real `KeyboardEvent`s, and prints the verdict.
 
@@ -139,6 +139,9 @@ deciduous workspace, linked to the action that used it.
   T-spin upgrade; `lastRotation.half` carries that.
 - **agent-1**: the seeded bag with Shift+R replay and the seed in the hash.
 - **agent-10**: best score in `localStorage`.
+- **agent-4**: the hard-drop trail, a 120 ms white streak down each column
+  the piece fell through. The column list is built from the landed cells'
+  top rows, so a rotated piece gets one streak per occupied column.
 - **agent-3, agent-4, agent-9**: the browser probe. Under
   `--virtual-time-budget` requestAnimationFrame fires once at most, so
   `test/probe.html` skips the loop, drives `update()` by hand with the real
