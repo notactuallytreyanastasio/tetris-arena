@@ -5,7 +5,8 @@
 // ---------------------------------------------------------------------------
 
 const W = 10;          // columns
-const HIDDEN = 2;      // rows above the visible field, where pieces spawn
+const HIDDEN = 4;      // rows above the visible field: 2 to spawn in, 2 more so an
+                       // SRS kick that lifts a piece 2 rows never leaves the array
 const VISIBLE = 20;    // rows the player sees
 const H = VISIBLE + HIDDEN;
 const CELL = 30;       // css pixels per cell on the board canvas
@@ -65,8 +66,10 @@ for (const id of [I, O, T, S, Z, J, L]) {
 }
 
 // Where each piece appears. Guideline: JLSTZ and I fill columns 3..5 / 3..6,
-// O sits in 4..5. y = 0 is the top hidden row.
+// O sits in 4..5. SPAWN_Y puts the piece's bottom row just above the visible
+// field; the first gravity step brings it into view.
 const SPAWN_X = { [I]: 3, [O]: 4, [T]: 3, [S]: 3, [Z]: 3, [J]: 3, [L]: 3 };
+const SPAWN_Y = HIDDEN - 2;
 
 // SRS wall kicks, written exactly as the guideline tables give them, with
 // +y meaning UP. Our board has +y down, so tryRotate negates y on use.
@@ -106,8 +109,10 @@ function cell(x, y) { return board[y * W + x]; }
 function fits(id, r, px, py) {
   for (const [cx, cy] of SHAPES[id][r]) {
     const x = px + cx, y = py + cy;
-    if (x < 0 || x >= W || y >= H) return false;
-    if (y < 0) continue;              // above the board is fine
+    // The ceiling is solid. With HIDDEN buffer rows above the spawn there is
+    // room for any kick, so a piece that would leave the array is simply
+    // refused; nothing is ever silently clipped.
+    if (x < 0 || x >= W || y < 0 || y >= H) return false;
     if (board[y * W + x]) return false;
   }
   return true;
@@ -116,7 +121,8 @@ function fits(id, r, px, py) {
 function lockPiece(p) {
   for (const [cx, cy] of SHAPES[p.id][p.r]) {
     const x = p.x + cx, y = p.y + cy;
-    if (y >= 0) board[y * W + x] = p.id;
+    if (y < 0) throw new Error(`lockPiece: cell above the board at (${x},${y}) for piece ${NAMES[p.id]}`);
+    board[y * W + x] = p.id;
   }
 }
 
@@ -149,6 +155,9 @@ const LOCK_RESETS = 15;      // guideline move-reset cap
 const SOFT_DROP_FACTOR = 20; // soft drop is 20x gravity
 
 const CLEAR_FLASH = 120;     // ms the full rows flash before they vanish
+const TOAST_MS = 900;        // scoring label lifetime
+const TRAIL_MS = 120;        // hard-drop streak lifetime
+const BEST_KEY = 'agent5.tetris.best';
 const LINES_PER_LEVEL = 10;
 
 // Guideline scoring, indexed by lines cleared. Multiplied by level.
@@ -180,9 +189,24 @@ const state = {
   level: 1,
   b2b: false,        // last line clear was a tetris or T-spin
   combo: -1,         // consecutive locks that cleared lines; -1 = none
+  toasts: [],        // [{ text, ms }] scoring feedback drawn on the board (idea from agent-4)
+  trail: null,       // { id, cols: [[x, fromY, toY]], ms } after a hard drop
+  best: loadBest(),
   paused: false,
   over: false,
 };
+
+function loadBest() {
+  try { return Number(localStorage.getItem(BEST_KEY)) || 0; } catch (e) { return 0; }
+}
+
+function saveBest() {
+  if (state.score <= state.best) return;
+  state.best = state.score;
+  try { localStorage.setItem(BEST_KEY, String(state.best)); } catch (e) { /* private mode */ }
+}
+
+function toast(text) { state.toasts.push({ text, ms: TOAST_MS }); }
 
 function gravityMs() { return gravityFor(state.level); }
 
@@ -201,6 +225,8 @@ function reset() {
   state.level = 1;
   state.b2b = false;
   state.combo = -1;
+  state.toasts = [];
+  state.trail = null;
   state.paused = false;
   state.over = false;
   spawn();
@@ -209,11 +235,15 @@ function reset() {
 function setPaused(on) {
   if (state.over || state.paused === on) return;
   state.paused = on;
-  if (on) { input.dir = 0; input.soft = false; }  // keyups will be missed
+  if (on) { input.held = []; input.soft = false; }  // keyups will be missed
 }
 
-// Held keys. dir is -1/0/+1 for the direction currently auto-shifting.
-const input = { dir: 0, dasAcc: 0, dasCharged: false, soft: false };
+// Held horizontal keys, oldest first. The newest press is the one that
+// auto-shifts; releasing it hands control back to whatever is still held,
+// already charged, since that key has by definition been down longer than
+// DAS. (Stack from agent-1, resume-charged from agent-7.)
+const input = { held: [], dasAcc: 0, dasCharged: false, soft: false };
+const activeDir = () => input.held.length ? input.held[input.held.length - 1] : 0;
 
 function takeNext() {
   while (state.queue.length <= NEXT_COUNT) state.queue.push(nextFromBag());
@@ -224,10 +254,14 @@ function takeNext() {
 function spawn(forcedId) {
   const id = forcedId || takeNext();
   if (!forcedId) state.holdUsed = false;
-  const p = { id, r: 0, x: SPAWN_X[id], y: 0, lowestY: 0, resets: 0, spun: false, kick: 0 };
-  if (!fits(id, 0, p.x, p.y)) { state.over = true; return; }
-  // Guideline: drop one row immediately if the way is clear, so the piece
-  // is visible right away rather than hanging in the hidden rows.
+  const p = { id, r: 0, x: SPAWN_X[id], y: SPAWN_Y, lowestY: 0, resets: 0, spun: false, kick: 0 };
+  // Guideline: if the spawn cell is blocked, try one row higher before
+  // calling it a block-out (agent-3). Then drop one row immediately if the
+  // way is clear, so the piece is visible right away.
+  if (!fits(id, 0, p.x, p.y)) {
+    p.y -= 1;
+    if (!fits(id, 0, p.x, p.y)) { state.over = true; return; }
+  }
   if (fits(id, 0, p.x, p.y + 1)) p.y += 1;
   p.lowestY = p.y;
   state.piece = p;
@@ -311,15 +345,19 @@ function removeRows(rows) {
   }
 }
 
+const CLEAR_NAMES = ['', 'SINGLE', 'DOUBLE', 'TRIPLE', 'TETRIS'];
+
 function award(n, spin) {
   let pts;
   if (spin === 'full') pts = SCORE.tspin[n];
   else if (spin === 'mini') pts = SCORE.mini[Math.min(n, 2)];
   else pts = SCORE.normal[n];
   pts *= state.level;
+  let label = spin === 'full' ? 'T-SPIN' : spin === 'mini' ? 'MINI T-SPIN' : '';
+  if (n > 0) label += (label ? ' ' : '') + CLEAR_NAMES[n];
   if (n > 0) {
     const hard = n === 4 || spin !== null;
-    if (hard && state.b2b) pts = Math.floor(pts * 1.5);
+    if (hard && state.b2b) { pts = Math.floor(pts * 1.5); label = 'B2B ' + label; }
     state.b2b = hard;
     state.combo += 1;
     if (state.combo > 0) pts += 50 * state.combo * state.level;   // from agent-2
@@ -329,6 +367,9 @@ function award(n, spin) {
     state.combo = -1;
   }
   state.score += pts;
+  // One label per lock: the clear and its points, then combo on its own line.
+  if (label) toast(`${label} +${pts}`);
+  if (n > 0 && state.combo > 0) toast(`COMBO x${state.combo}`);
 }
 
 function lockNow() {
@@ -340,10 +381,11 @@ function lockNow() {
   // Lock-out: the whole piece came to rest above the visible field.
   let visible = false;
   for (const [, cy] of SHAPES[p.id][p.r]) if (p.y + cy >= HIDDEN) visible = true;
-  if (!visible) { state.over = true; return; }
+  if (!visible) { state.over = true; saveBest(); return; }
 
   const rows = fullRows();
   award(rows.length, spin);
+  saveBest();
   if (rows.length) {
     state.clearing = { rows, t: 0 };   // spawn happens after the flash
   } else {
@@ -365,7 +407,20 @@ function stepDown() {
 function hardDrop() {
   const p = state.piece;
   if (!p) return;
+  const fromY = p.y;
   while (stepDown()) state.score += 2;
+  if (p.y > fromY) {
+    // One streak per column the piece occupies, from where its top cell was
+    // to where it landed. (Idea from agent-4 and agent-7.)
+    const top = new Map();
+    for (const [cx, cy] of SHAPES[p.id][p.r]) {
+      const x = p.x + cx;
+      if (!top.has(x) || cy < top.get(x)) top.set(x, cy);
+    }
+    const cols = [];
+    for (const [x, cy] of top) cols.push([x, fromY + cy, p.y + cy]);
+    state.trail = { id: p.id, cols, ms: TRAIL_MS };
+  }
   lockNow();
 }
 
@@ -386,8 +441,16 @@ function ghostY(p) {
   return y;
 }
 
+function tickEffects(dt) {
+  for (const t of state.toasts) t.ms -= dt;
+  state.toasts = state.toasts.filter((t) => t.ms > 0);
+  if (state.trail && (state.trail.ms -= dt) <= 0) state.trail = null;
+}
+
 function update(dt) {
-  if (state.over || state.paused) return;
+  if (state.paused) return;
+  tickEffects(dt);    // labels keep fading after game over
+  if (state.over) return;
 
   if (state.clearing) {
     state.clearing.t += dt;
@@ -397,28 +460,34 @@ function update(dt) {
       state.clearing = null;
       // Perfect clear: checked after the collapse, on the whole array,
       // so hidden rows count too.
-      if (board.every((v) => v === 0)) state.score += SCORE.perfect[n] * state.level;
+      if (board.every((v) => v === 0)) {
+        const bonus = SCORE.perfect[n] * state.level;
+        state.score += bonus;
+        toast(`PERFECT CLEAR +${bonus}`);
+        saveBest();
+      }
       spawn();
     }
     // Keep charging DAS while the rows flash, capped at one full charge, so
     // a direction held through a clear moves the next piece on its first
     // frame instead of waiting a fresh DAS. (Hitch spotted by agent-10.)
-    if (input.dir !== 0 && !input.dasCharged) input.dasAcc = Math.min(input.dasAcc + dt, DAS);
+    if (activeDir() !== 0 && !input.dasCharged) input.dasAcc = Math.min(input.dasAcc + dt, DAS);
     return;
   }
 
   // Delayed auto shift
-  if (input.dir !== 0) {
+  const dir = activeDir();
+  if (dir !== 0) {
     input.dasAcc += dt;
     if (!input.dasCharged && input.dasAcc >= DAS) {
       input.dasCharged = true;
       input.dasAcc -= DAS;
-      tryMove(input.dir);
+      tryMove(dir);
     }
     if (input.dasCharged) {
       while (input.dasAcc >= ARR) {
         input.dasAcc -= ARR;
-        if (!tryMove(input.dir)) { input.dasAcc = 0; break; }
+        if (!tryMove(dir)) { input.dasAcc = 0; break; }
       }
     }
   }
@@ -445,15 +514,22 @@ function update(dt) {
 // ---------------------------------------------------------------------------
 
 function pressDir(d) {
-  // Last pressed direction wins; DAS restarts from zero.
-  input.dir = d;
+  // Newest press wins; DAS restarts from zero for it.
+  input.held = input.held.filter((h) => h !== d);
+  input.held.push(d);
   input.dasAcc = 0;
   input.dasCharged = false;
   tryMove(d);
 }
 
 function releaseDir(d) {
-  if (input.dir === d) { input.dir = 0; input.dasAcc = 0; input.dasCharged = false; }
+  const wasActive = activeDir() === d;
+  input.held = input.held.filter((h) => h !== d);
+  if (!wasActive) return;
+  input.dasAcc = 0;
+  // The other key, if any, has been held longer than the one just released,
+  // so it resumes charged: the next ARR tick moves, not a fresh DAS wait.
+  input.dasCharged = input.held.length > 0;
 }
 
 document.addEventListener('keydown', (e) => {
@@ -485,6 +561,7 @@ document.addEventListener('keyup', (e) => {
 // Losing focus loses the keyup for any held key, and a piece should not
 // keep falling in a tab nobody is looking at: both cases pause.
 window.addEventListener('blur', () => setPaused(true));
+window.addEventListener('beforeunload', saveBest);
 document.addEventListener('visibilitychange', () => { if (document.hidden) setPaused(true); });
 
 // ---------------------------------------------------------------------------
@@ -584,6 +661,23 @@ function draw() {
     }
   }
 
+  // hard-drop streaks, fading, under everything that moves
+  if (state.trail) {
+    const life = state.trail.ms / TRAIL_MS;
+    ctx.fillStyle = COLORS[state.trail.id];
+    for (const [x, fromY, toY] of state.trail.cols) {
+      const y0 = fromY - HIDDEN, y1 = toY - HIDDEN;
+      if (y1 <= 0) continue;
+      const g = ctx.createLinearGradient(0, Math.max(y0, 0) * CELL, 0, y1 * CELL);
+      g.addColorStop(0, 'rgba(255,255,255,0)');
+      g.addColorStop(1, COLORS[state.trail.id]);
+      ctx.globalAlpha = 0.35 * life;
+      ctx.fillStyle = g;
+      ctx.fillRect(x * CELL + 4, Math.max(y0, 0) * CELL, CELL - 8, (y1 - Math.max(y0, 0)) * CELL);
+    }
+    ctx.globalAlpha = 1;
+  }
+
   // ghost, then the active piece on top. While the piece rests on the
   // stack it brightens as the lock delay runs out, so the lock is not a
   // surprise.
@@ -603,7 +697,29 @@ function draw() {
       if (y >= 0) drawCell(ctx, p.x + cx, y, color, CELL);
     }
   }
+  drawToasts();
   drawPanels();
+}
+
+// Scoring labels stacked around the upper third of the board, rising and
+// fading. Layout from agent-4; the text is composed in award().
+function drawToasts() {
+  if (!state.toasts.length) return;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = 'bold 16px ui-monospace, Menlo, Consolas, monospace';
+  state.toasts.forEach((t, i) => {
+    const life = t.ms / TOAST_MS;             // 1 -> 0
+    const rise = (1 - life) * 14;
+    ctx.globalAlpha = Math.min(1, life * 2);
+    const w = ctx.measureText(t.text).width + 18;
+    const cy = VISIBLE * CELL * 0.36 + i * 26 - rise;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(W * CELL / 2 - w / 2, cy - 12, w, 24);
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(t.text, W * CELL / 2, cy);
+  });
+  ctx.globalAlpha = 1;
 }
 
 // HUD. Writing textContent every frame forces layout for nothing, so each
@@ -613,11 +729,12 @@ const hud = {
   score: document.getElementById('score'),
   level: document.getElementById('level'),
   lines: document.getElementById('lines'),
+  best: document.getElementById('best'),
   overlay: document.getElementById('overlay'),
   overlayTitle: document.getElementById('overlay-title'),
   overlaySub: document.getElementById('overlay-sub'),
 };
-const shown = { score: -1, level: -1, lines: -1, overlay: '' };
+const shown = { score: -1, level: -1, lines: -1, best: -1, overlay: '' };
 
 function setText(key, value) {
   if (shown[key] === value) return;
@@ -629,6 +746,7 @@ function drawHud() {
   setText('score', state.score);
   setText('level', state.level);
   setText('lines', state.lines);
+  setText('best', Math.max(state.best, state.score));
   const mode = state.over ? 'over' : state.paused ? 'paused' : '';
   if (shown.overlay !== mode) {
     shown.overlay = mode;

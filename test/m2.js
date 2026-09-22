@@ -34,7 +34,7 @@ update(100); check('before DAS no move', state.piece.x === 4);
 update(80);  check('at DAS one more move', state.piece.x === 5);
 update(200); check('ARR reaches wall x=7', state.piece.x === 7);
 listeners.keyup({ code: 'ArrowRight' });
-check('release clears dir', input.dir === 0);
+check('release clears dir', api.activeDir() === 0);
 
 // 4. Lock delay: piece on floor locks after 500ms, moves reset it up to 15 times
 board.fill(0);

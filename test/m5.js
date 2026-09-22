@@ -13,8 +13,8 @@ const x0 = state.piece.x; key('ArrowLeft'); check('paused: input ignored', state
 key('Escape'); check('Esc resumes', !state.paused);
 update(1100); check('gravity resumes', state.piece.y > y0);
 // pause while holding right clears DAS
-key('ArrowRight'); check('dir set', api.input.dir === 1);
-key('KeyP'); check('pause clears held dir', api.input.dir === 0);
+key('ArrowRight'); check('dir set', api.activeDir() === 1);
+key('KeyP'); check('pause clears held dir', api.activeDir() === 0);
 key('KeyP');
 // game over: P does nothing
 state.over = true; key('KeyP'); check('no pause when over', !state.paused);
@@ -49,7 +49,7 @@ row(H-1, 'XXX....XXX'); setPiece(I, 0, 3, H-3);
 key('ArrowRight');                       // tap moves I to x=4? no: cols 4..7 would overlap... I state 0 at x=3 spans 3..6; row H-2 free so move ok
 state.piece.x = 3;                       // put it back over the gap, keep the direction held
 hardDrop();                              // clears row H-1, enters flash
-check('flash running with dir held', state.clearing !== null && api.input.dir === 1);
+check('flash running with dir held', state.clearing !== null && api.activeDir() === 1);
 update(120);                             // flash ends, next piece spawns
 const nx = state.piece.x;
 update(60);                              // 120 + 60 >= DAS 170: first shift should have fired

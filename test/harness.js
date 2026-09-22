@@ -16,14 +16,14 @@ const sandbox = {
   document: { getElementById: el, addEventListener: (t, f) => { listeners[t] = f; } },
   window: { devicePixelRatio: 2, addEventListener() {} },
   requestAnimationFrame: () => 0,
-  localStorage: { getItem: () => null, setItem() {} },
+  localStorage: (() => { const m = {}; return { getItem: (k) => (k in m ? m[k] : null), setItem: (k, v) => { m[k] = String(v); } }; })(),
   performance: { now: () => 0 },
 };
 sandbox.globalThis = sandbox;
 const src = fs.readFileSync(process.argv[2], 'utf8');
 const NAMES = ['state','board','SHAPES','fits','update','spawn','W','H','HIDDEN','NAMES','input',
   'tryMove','tryRotate','hardDrop','stepDown','lockNow','clearLines','I','O','T','S','Z','J','L',
-  'hold','reset','gravityFor','SCORE','ghostY','KICKS_JLSTZ','KICKS_I'];
+  'hold','reset','gravityFor','SCORE','ghostY','KICKS_JLSTZ','KICKS_I','activeDir','SPAWN_Y','toast','loadBest'];
 const expose = 'globalThis.__api = {' + NAMES.map(n => `get ${n}(){ try { return ${n}; } catch(e) { return undefined; } }`).join(',') + '};';
 vm.runInNewContext(src + '\n;' + expose, sandbox, { filename: process.argv[2] });
 module.exports = { api: sandbox.__api, listeners, sandbox };
