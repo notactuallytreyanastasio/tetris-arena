@@ -1,35 +1,102 @@
-# Tetris Arena
+# Tetris, agent-6
 
-Ten Claude Code sessions, each building its own Tetris in its own git
-worktree, all logging to one deciduous workspace and all reading each other's
-code and reasoning as they go. A demo of deciduous as the shared memory
-between concurrent agents.
+Open `index.html`. Run `node test.js` for the headless checks.
 
-    ./launch.sh          # ten agents, ten iTerm2 panes
-    ./launch.sh 4        # fewer
-    ./launch.sh 3 --dry-run   # panes and worktrees, no claude sessions
-    ./launch.sh --reset  # remove every worktree and agent-* branch
+Three files: `index.html` (layout, key legend), `style.css`, `tetris.js`. The
+JavaScript is one file in two halves. The top half is the game core and never
+touches the DOM; the bottom half is `mount()`, which wires a canvas and the
+keyboard to a core instance and only runs when `document` exists. That split
+is why `require('./tetris.js')` works in node and why `test.js` can drive a
+whole game with `update(g, 16)` and no browser.
 
-Each agent starts in `agents/agent-N/` on branch `agent-N`, reads `CLAUDE.md`
-(the arena rules) and goes. Sessions launch with
-`--dangerously-skip-permissions` so ten panes do not sit waiting for you to
-approve `git commit`; pass `--ask` to keep the prompts.
+## Design
 
-Needs: iTerm2, `claude` and `deciduous` on PATH, and a token stored by
-`deciduous remote login`. The workspace `tetris-arena` is created on the
-server the first time an agent writes to it.
+**Board.** A flat `Uint8Array`, 10 wide by 24 tall, index `y * 10 + x`. The top
+four rows are hidden. Cell value 0 is empty, 1 to 7 is the id of the piece
+that locked there, which is also its color. Everything outside the array is
+solid, including above row 0, so a piece can never occupy a cell that `lock()`
+could not store. Four hidden rows, not two, because the SRS kick tables can
+lift a piece two rows at the ceiling.
 
-## Watching
+**Pieces.** Seven pieces, each as four explicit orientations written as
+strings and parsed once at load:
 
-Every pane is an ordinary interactive session; you can type into any of them.
+```js
+T: ['.X.XXX...', '.X..XX.X.', '...XXX.X.', '.X.XX..X.'],
+```
 
-For the graph side, from any Claude Code session:
+Rotation at runtime is an index change. The orientation index is also the key
+into the SRS kick tables, which is why the orientations must be explicit
+rather than computed. The parser throws if a string is not square or does not
+have four cells. It caught one: the O had ten characters instead of nine, its
+box size parsed as 3.16, and it landed one row above the floor.
 
-    deciduous remote watch --claude-code
+**Kicks.** Full SRS, separate tables for I and for the rest, stored already
+flipped to y-down board coordinates with a comment saying so. The published
+tables are y-up and silently mixing the two conventions is the usual way to
+get kicks that lift when they should drop.
 
-prints a `Monitor(...)` call that streams every write to the workspace as it
-lands. Ten agents make that a busy stream. `check_activity` on workspace
-`tetris-arena` shows who holds a write lock right now.
+**Loop.** One `requestAnimationFrame`. Gravity, DAS, ARR, lock delay and the
+line-clear flash are all millisecond accumulators against a `dt` clamped to
+100ms. Gravity per level is the guideline curve, `(0.8 - 0.007n)^n` seconds a
+row. Level 1 is one row a second; level 10 is about sixteen.
 
-Afterwards, the ten games are on branches `agent-1` .. `agent-10`, and their
-reasoning is the `tetris-arena` workspace on the server.
+**Input feel.** DAS 170ms, ARR 40ms, lock delay 500ms with fifteen move resets
+that refresh when the piece reaches a new lowest row. Direction keys are a
+stack: the newest press wins, and releasing it hands DAS to the older key
+already charged, since that key has by definition been held longer than DAS.
+OS key repeat is ignored. Losing the window or the tab pauses the game and
+drops every held key, so nothing auto-repeats into a wall when focus returns.
+
+**Scoring.** Guideline. 100/300/500/800 times level for clears; T-spins
+400/800/1200/1600, minis 100/200/400; back-to-back tetris or T-spin 1.5x;
+combo 50 times count times level; perfect clear 800/1200/1800/2000; soft drop
+1 a row, hard drop 2 a row. Scoring happens at lock, not after the flash,
+because a T-spin that clears nothing still pays and the spin state is only
+known at lock. T-spin detection is the three-corner rule: the T's last
+maneuver was a rotation and three of the four corners of its 3x3 box are
+solid; full if both corners on the pointing side are solid or the rotation
+used the fifth kick, else mini.
+
+**Rendering.** Canvas 2D, full redraw each frame, backing store scaled by
+`devicePixelRatio`. The ghost is a 2px outline at 45% alpha, not a filled
+cell, so it never reads as a settled block. A grounded piece brightens toward
+white as its lock delay runs out. Full rows flash white for 140ms before they
+collapse; during the flash there is no active piece. The HUD is DOM and is
+written only when a value changes.
+
+## What I took, from whom, and what I changed
+
+- **agent-9**: the 7-bag randomizer and the idea of a core that loads in node.
+  Changed: one file with a guarded `mount()` instead of an IIFE per file, and
+  the random source is injected so tests are deterministic.
+- **agent-3** and **agent-9**: four hidden rows. My first version treated
+  `y < 0` as air and then dropped those cells at lock time, which is a silent
+  data loss. Changed: `y < 0` is solid, uniform with the walls.
+- **agent-1**: lock-out (a piece settling entirely in the hidden rows ends the
+  game), the DPR-scaled canvas, and the held-direction stack. Changed: the
+  stack hands DAS over charged rather than restarting it.
+- **agent-3**: the bottom-up `copyWithin` line-clear loop, the spawn-one-row-
+  higher retry before block-out, change-only HUD writes, and shipping the
+  tests in the repo.
+- **agent-5**: the three-corner T-spin rule with the fifth-kick upgrade, and
+  the lock-delay pulse. Changed: the spun flag is cleared by any successful
+  move, horizontal included, not only by a fall.
+- **agent-2**: combo scoring and the last-event label for the HUD.
+- **agent-8**: the perfect-clear bonus.
+
+Others took from here too: agent-3 took the DOM-free core split, agent-4 the
+lowest-row lock reset, agent-7 the line-clear flash.
+
+## What does not work
+
+- There is no touch or gamepad input.
+- The line-clear flash is a solid white bar; there is no per-cell animation.
+- No high score is stored.
+- `node test.js` covers the core only. `mount()` is checked by loading the
+  page in headless Chrome and grepping for console errors, not by a test.
+
+## Keys
+
+Left/Right move, Up or X rotate clockwise, Z counter-clockwise, Down soft
+drop, Space hard drop, C or Shift hold, P or Esc pause, R restart.

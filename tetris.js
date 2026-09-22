@@ -35,6 +35,7 @@ const CLEAR_SCORE = [0, 100, 300, 500, 800];
 const TSPIN_SCORE = [400, 800, 1200, 1600];   // by lines cleared, 0..3
 const TSPIN_MINI_SCORE = [100, 200, 400];     // 0..2
 const COMBO_SCORE = 50;                       // x combo count x level, per consecutive clearing lock
+const PERFECT_CLEAR_SCORE = [0, 800, 1200, 1800, 2000]; // board empty after the clear (taken from agent-8)
 const BACK_TO_BACK = 1.5;                     // tetris or T-spin clear after another such clear
 const NEXT_COUNT = 5;                         // pieces shown in the preview
 const SOFT_DROP_POINTS = 1;       // per row
@@ -161,6 +162,16 @@ function rowFull(board, y) {
   return true;
 }
 
+// True if every cell outside the given (full) rows is empty: the board will
+// be empty once those rows collapse. Used for the perfect-clear bonus.
+function boardEmptyExcept(board, rows) {
+  for (let y = 0; y < ROWS; y++) {
+    if (rows.includes(y)) continue;
+    for (let x = 0; x < COLS; x++) if (board[y * COLS + x]) return false;
+  }
+  return true;
+}
+
 function fullRows(board) {
   const rows = [];
   for (let y = 0; y < ROWS; y++) if (rowFull(board, y)) rows.push(y);
@@ -184,6 +195,7 @@ function newGame(random = Math.random) {
     holdUsed: false,      // hold already used for the current piece
     piece: null,          // { id, shape, x, y, o, lowestY, spun, kick }
     over: false,
+    paused: false,
 
     score: 0,
     lines: 0,
@@ -198,11 +210,13 @@ function newGame(random = Math.random) {
     lockResets: 0,        // moves/rotates that restarted lockTimer this piece
     grounded: false,      // piece cannot move down right now
 
-    // input state; the DOM layer calls press()/release(), the loop reads these
-    held: { left: false, right: false, down: false },
-    dasDir: 0,            // -1, 0, 1: the direction currently auto-repeating
-    dasTimer: 0,          // ms since dasDir was pressed (or since last ARR step)
-    dasCharged: false,    // past the DAS threshold, now in ARR
+    // Input state; the DOM layer calls press()/release(), update() reads it.
+    // heldDirs is a stack of -1/1, oldest first: the newest press wins and
+    // releasing it falls back to whatever is still held (shape from agent-1).
+    heldDirs: [],
+    softDrop: false,
+    dasTimer: 0,          // ms since the active direction was pressed (or since the last ARR step)
+    dasCharged: false,    // past the DAS threshold, now repeating every ARR
   };
   while (g.queue.length < NEXT_COUNT) g.queue.push(g.bag());
   spawn(g);
@@ -257,6 +271,19 @@ function holdPiece(g) {
 }
 
 // Row the piece would land on if dropped straight down. The ghost is drawn there.
+function activeDir(g) {
+  return g.heldDirs.length ? g.heldDirs[g.heldDirs.length - 1] : 0;
+}
+
+// Drop every held key. Called on window blur so nothing auto-repeats into a
+// wall while the tab is not focused (agent-1 does this too).
+function releaseAll(g) {
+  g.heldDirs.length = 0;
+  g.softDrop = false;
+  g.dasTimer = 0;
+  g.dasCharged = false;
+}
+
 function ghostY(g) {
   const p = g.piece;
   let y = p.y;
@@ -314,6 +341,7 @@ function award(g, n, spin) {
     g.backToBack = difficult;
     g.combo++;
     if (g.combo > 0) { points += COMBO_SCORE * g.combo * g.level; label += ' x' + (g.combo + 1); }
+    if (boardEmptyExcept(g.board, fullRows(g.board))) { points += PERFECT_CLEAR_SCORE[n] * g.level; label = 'Perfect clear ' + label; }
     g.lines += n;
     g.level = 1 + Math.floor(g.lines / LINES_PER_LEVEL);
   } else {
@@ -382,20 +410,21 @@ function hardDrop(g) {
 
 // --- input entry points. `key` is one of left, right, down, cw, ccw, hard.
 function press(g, key) {
-  if (g.over) return;
+  if (key === 'pause') { if (!g.over) g.paused = !g.paused; return; }
+  if (g.over || g.paused) return;
   switch (key) {
     case 'left':
     case 'right': {
       const dir = key === 'left' ? -1 : 1;
-      g.held[key] = true;
-      // Last pressed direction wins; the first step is immediate, then DAS.
+      g.heldDirs = g.heldDirs.filter(d => d !== dir);
+      g.heldDirs.push(dir);
+      // The first step is immediate, then DAS, then ARR.
       tryMove(g, dir, 0);
-      g.dasDir = dir;
       g.dasTimer = 0;
       g.dasCharged = false;
       break;
     }
-    case 'down': g.held.down = true; break;
+    case 'down': g.softDrop = true; break;
     case 'cw': tryRotate(g, 1); break;
     case 'ccw': tryRotate(g, -1); break;
     case 'hard': hardDrop(g); break;
@@ -405,24 +434,23 @@ function press(g, key) {
 
 function release(g, key) {
   if (key === 'left' || key === 'right') {
-    g.held[key] = false;
     const dir = key === 'left' ? -1 : 1;
-    if (g.dasDir === dir) {
-      // If the other direction is still held, hand DAS to it, fully charged:
-      // releasing one key of a pair should not make the other stutter.
-      const other = dir === -1 ? g.held.right : g.held.left;
-      g.dasDir = other ? -dir : 0;
+    const wasActive = activeDir(g) === dir;
+    g.heldDirs = g.heldDirs.filter(d => d !== dir);
+    if (wasActive) {
+      // Hand DAS to the older direction already charged: it has been held
+      // longer than DAS by definition, so restarting it would stutter.
       g.dasTimer = 0;
-      g.dasCharged = other;
+      g.dasCharged = g.heldDirs.length > 0;
     }
   } else if (key === 'down') {
-    g.held.down = false;
+    g.softDrop = false;
   }
 }
 
 // Advance the game by dt ms.
 function update(g, dt) {
-  if (g.over) return;
+  if (g.over || g.paused) return;
   if (g.clearing) {
     g.clearing.timer += dt;
     if (g.clearing.timer >= CLEAR_FLASH) finishClear(g);
@@ -431,29 +459,30 @@ function update(g, dt) {
   if (!g.piece) return;
 
   // Horizontal auto-repeat.
-  if (g.dasDir !== 0) {
+  const dir = activeDir(g);
+  if (dir !== 0) {
     g.dasTimer += dt;
     if (!g.dasCharged && g.dasTimer >= DAS) {
       g.dasCharged = true;
       g.dasTimer -= DAS;
-      tryMove(g, g.dasDir, 0);
+      tryMove(g, dir, 0);
     }
     if (g.dasCharged) {
       while (g.dasTimer >= ARR) {
         g.dasTimer -= ARR;
-        if (!tryMove(g, g.dasDir, 0)) { g.dasTimer = 0; break; }
+        if (!tryMove(g, dir, 0)) { g.dasTimer = 0; break; }
       }
     }
   }
 
   // Gravity, or soft drop when down is held.
   let step = gravityMs(g.level);
-  if (g.held.down) step = Math.max(step / SOFT_DROP_FACTOR, 1);
+  if (g.softDrop) step = Math.max(step / SOFT_DROP_FACTOR, 1);
   g.gravityAcc += dt;
   while (g.gravityAcc >= step) {
     g.gravityAcc -= step;
     if (!tryMove(g, 0, 1)) { g.gravityAcc = 0; break; }
-    if (g.held.down) g.score += SOFT_DROP_POINTS;
+    if (g.softDrop) g.score += SOFT_DROP_POINTS;
   }
 
   // Lock delay: only counts while the piece cannot fall.
@@ -473,20 +502,35 @@ if (typeof module !== 'undefined') {
     CLEAR_FLASH, CLEAR_SCORE, LINES_PER_LEVEL,
     SHAPES, COLORS, KICKS_JLSTZ, KICKS_I, gravityMs, makeBag, cellAt, fits,
     clearFullRows, fullRows,
-    NEXT_COUNT, TSPIN_SCORE, TSPIN_MINI_SCORE, COMBO_SCORE,
+    NEXT_COUNT, TSPIN_SCORE, TSPIN_MINI_SCORE, COMBO_SCORE, PERFECT_CLEAR_SCORE,
     newGame, spawn, lock, finishClear, tryMove, tryRotate, hardDrop, holdPiece, ghostY, tspinKind,
-    press, release, update,
+    activeDir, releaseAll, press, release, update,
   };
 }
 
 // ---------------------------------------------------------------- DOM layer
 
-function mount(doc) {
+function mount(doc, win) {
+  // Backing store scaled by devicePixelRatio so cell edges are crisp on
+  // high-density screens; drawing code stays in CSS pixels (from agent-1).
+  function fitCanvas(c) {
+    const dpr = win.devicePixelRatio || 1;
+    const cssW = c.width, cssH = c.height;
+    c.width = Math.round(cssW * dpr);
+    c.height = Math.round(cssH * dpr);
+    c.style.width = cssW + 'px';
+    c.style.height = cssH + 'px';
+    c.getContext('2d').setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { w: cssW, h: cssH };
+  }
   const boardCanvas = doc.getElementById('board');
+  const boardSize = fitCanvas(boardCanvas);
   const ctx = boardCanvas.getContext('2d');
   const nextCanvas = doc.getElementById('next');
+  const nextSize = fitCanvas(nextCanvas);
   const nextCtx = nextCanvas.getContext('2d');
   const holdCanvas = doc.getElementById('hold');
+  const holdSize = fitCanvas(holdCanvas);
   const holdCtx = holdCanvas.getContext('2d');
   const eventEl = doc.getElementById('event');
   const hud = {
@@ -501,7 +545,7 @@ function mount(doc) {
 
   // Only touch the DOM when a number changes; text writes are the one thing
   // here that costs layout.
-  const shown = { score: -1, lines: -1, level: -1, over: null, event: null, queue: '', hold: -1 };
+  const shown = { score: -1, lines: -1, level: -1, overlay: null, event: null, queue: '', hold: -1 };
   function syncHud() {
     for (const k of ['score', 'lines', 'level']) {
       if (shown[k] !== g[k]) { shown[k] = g[k]; hud[k].textContent = String(g[k]); }
@@ -511,12 +555,14 @@ function mount(doc) {
       eventEl.textContent = g.lastEvent ? `${g.lastEvent.label}  +${g.lastEvent.points}` : '';
     }
     const q = g.queue.join(',');
-    if (shown.queue !== q) { shown.queue = q; drawPreview(nextCtx, nextCanvas, g.queue); }
-    if (shown.hold !== g.hold) { shown.hold = g.hold; drawPreview(holdCtx, holdCanvas, g.hold ? [g.hold] : []); }
-    if (shown.over !== g.over) {
-      shown.over = g.over;
-      overlay.classList.toggle('hidden', !g.over);
-      if (g.over) { overlayTitle.textContent = 'Game over'; overlayHint.textContent = 'Press R to restart'; }
+    if (shown.queue !== q) { shown.queue = q; drawPreview(nextCtx, nextSize, g.queue); }
+    if (shown.hold !== g.hold) { shown.hold = g.hold; drawPreview(holdCtx, holdSize, g.hold ? [g.hold] : []); }
+    const state = g.over ? 'over' : g.paused ? 'paused' : 'playing';
+    if (shown.overlay !== state) {
+      shown.overlay = state;
+      overlay.classList.toggle('hidden', state === 'playing');
+      if (state === 'over') { overlayTitle.textContent = 'Game over'; overlayHint.textContent = 'Press R to restart'; }
+      if (state === 'paused') { overlayTitle.textContent = 'Paused'; overlayHint.textContent = 'Press P to resume'; }
     }
   }
 
@@ -546,23 +592,30 @@ function mount(doc) {
   // at a smaller cell size so five fit in the next column.
   function drawPreview(c, canvas, ids) {
     const size = 24;
-    const slot = canvas.height / NEXT_COUNT;
+    const slot = canvas.h / NEXT_COUNT;
     c.fillStyle = '#0e0f13';
-    c.fillRect(0, 0, canvas.width, canvas.height);
+    c.fillRect(0, 0, canvas.w, canvas.h);
     ids.forEach((id, i) => {
       const shape = SHAPES[id - 1];
       const cells = shape.cells[0];
       let minX = 9, maxX = -1, minY = 9, maxY = -1;
       for (const [cx, cy] of cells) { minX = Math.min(minX, cx); maxX = Math.max(maxX, cx); minY = Math.min(minY, cy); maxY = Math.max(maxY, cy); }
       const pw = (maxX - minX + 1) * size, ph = (maxY - minY + 1) * size;
-      const ox = (canvas.width - pw) / 2;
-      const oy = (ids.length === 1 ? (canvas.height - ph) / 2 : i * slot + (slot - ph) / 2);
+      const ox = (canvas.w - pw) / 2;
+      const oy = (ids.length === 1 ? (canvas.h - ph) / 2 : i * slot + (slot - ph) / 2);
       for (const [cx, cy] of cells) drawCell(c, ox + (cx - minX) * size, oy + (cy - minY) * size, COLORS[id], size);
     });
   }
 
+  // Blend a hex color toward white by t in [0, 1], for the lock-delay pulse.
+  function lighten(hex, t) {
+    const n = parseInt(hex.slice(1), 16);
+    const ch = sh => Math.round(((n >> sh) & 255) + (255 - ((n >> sh) & 255)) * t);
+    return `rgb(${ch(16)},${ch(8)},${ch(0)})`;
+  }
+
   function render() {
-    const w = boardCanvas.width, h = boardCanvas.height;
+    const w = boardSize.w, h = boardSize.h;
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, w, h);
 
@@ -587,9 +640,13 @@ function mount(doc) {
           if (y >= 0) drawGhostCell(ctx, (p.x + cx) * CELL, y * CELL, COLORS[p.id]);
         }
       }
+      // While grounded the piece brightens as the lock delay runs out, so
+      // the lock is something you watched coming (idea from agent-5).
+      const t = g.grounded ? Math.min(g.lockTimer / LOCK_DELAY, 1) : 0;
+      const color = t > 0 ? lighten(COLORS[p.id], t * 0.55) : COLORS[p.id];
       for (const [cx, cy] of p.shape.cells[p.o]) {
         const y = p.y + cy - HIDDEN_ROWS;
-        if (y >= 0) drawCell(ctx, (p.x + cx) * CELL, y * CELL, COLORS[p.id]);
+        if (y >= 0) drawCell(ctx, (p.x + cx) * CELL, y * CELL, color);
       }
     }
 
@@ -609,6 +666,7 @@ function mount(doc) {
     ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down',
     ArrowUp: 'cw', KeyX: 'cw', KeyZ: 'ccw', Space: 'hard',
     KeyC: 'hold', ShiftLeft: 'hold', ShiftRight: 'hold',
+    KeyP: 'pause', Escape: 'pause',
   };
   doc.addEventListener('keydown', e => {
     if (e.code === 'KeyR') { g = newGame(); return; }
@@ -622,18 +680,26 @@ function mount(doc) {
     const key = KEYMAP[e.code];
     if (key) release(g, key);
   });
+  // Losing the tab or the window pauses the game and drops every held key,
+  // so nothing auto-repeats into a wall when focus comes back.
+  function pauseFromOutside() {
+    releaseAll(g);
+    if (!g.over && !g.paused) g.paused = true;
+  }
+  doc.addEventListener('visibilitychange', () => { if (doc.hidden) pauseFromOutside(); });
+  win.addEventListener('blur', pauseFromOutside);
 
-  let last = performance.now();
+  let last = win.performance.now();
   function frame(now) {
-    // Clamp dt so a backgrounded tab does not dump seconds of gravity at once.
+    // Clamp dt so a stalled frame does not dump seconds of gravity at once.
     const dt = Math.min(now - last, 100);
     last = now;
     update(g, dt);
     render();
-    requestAnimationFrame(frame);
+    win.requestAnimationFrame(frame);
   }
-  requestAnimationFrame(frame);
+  win.requestAnimationFrame(frame);
   return () => g;
 }
 
-if (typeof document !== 'undefined') mount(document);
+if (typeof document !== 'undefined') mount(document, window);
