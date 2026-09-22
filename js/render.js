@@ -6,8 +6,16 @@ class Renderer {
   constructor(canvas) {
     this.canvas = canvas;
     this.ctx = canvas.getContext('2d');
-    canvas.width = COLS * CELL;
-    canvas.height = VISIBLE_ROWS * CELL;
+    // Backing store scaled by devicePixelRatio so cell edges are crisp on
+    // retina (taken from agent-1). CSS size stays in CSS pixels.
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = COLS * CELL * dpr;
+    canvas.height = VISIBLE_ROWS * CELL * dpr;
+    canvas.style.width = COLS * CELL + 'px';
+    canvas.style.height = VISIBLE_ROWS * CELL + 'px';
+    this.ctx.scale(dpr, dpr);
+    this.w = COLS * CELL;
+    this.h = VISIBLE_ROWS * CELL;
   }
 
   cell(x, y, color) {
@@ -55,7 +63,7 @@ class Renderer {
   draw(game) {
     const ctx = this.ctx;
     ctx.fillStyle = '#0b0e14';
-    ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+    ctx.fillRect(0, 0, this.w, this.h);
     this.drawGrid();
 
     const grid = game.board.grid;
@@ -70,11 +78,11 @@ class Renderer {
 
     if (game.over) {
       ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(0, 0, this.canvas.width, this.canvas.height);
+      ctx.fillRect(0, 0, this.w, this.h);
       ctx.fillStyle = '#fff';
       ctx.font = 'bold 28px system-ui, sans-serif';
       ctx.textAlign = 'center';
-      ctx.fillText('GAME OVER', this.canvas.width / 2, this.canvas.height / 2);
+      ctx.fillText('GAME OVER', this.w / 2, this.h / 2);
     }
   }
 }

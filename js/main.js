@@ -2,6 +2,7 @@
 
 const game = new Game();
 const renderer = new Renderer(document.getElementById('board'));
+const input = new Input(game);
 
 let last = performance.now();
 function frame(now) {
@@ -9,6 +10,7 @@ function frame(now) {
   // gravity in one frame when it comes back.
   const dt = Math.min(now - last, 100);
   last = now;
+  input.update(dt);
   game.update(dt);
   renderer.draw(game);
   requestAnimationFrame(frame);
