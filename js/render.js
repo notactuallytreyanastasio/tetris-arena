@@ -159,8 +159,12 @@ function makeRenderer(boardCanvas) {
 function makePreview(canvas, slots) {
   const SIZE = 24, BOX = 4 * SIZE;
   const ctx = fitCanvas(canvas, BOX, BOX * slots);
+  let shown = null;   // redraw only when the contents change (via agent-3)
 
   function draw(ids, dim = false) {
+    const key = ids.join(',') + (dim ? '!' : '');
+    if (key === shown) return;
+    shown = key;
     ctx.clearRect(0, 0, BOX, BOX * slots);
     ctx.globalAlpha = dim ? 0.35 : 1;
     ids.forEach((id, slot) => {

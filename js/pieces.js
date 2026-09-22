@@ -60,12 +60,39 @@ const KICKS_I = {
   '30': [[0,0],[ 1,0],[-2,0],[ 1,-2],[-2, 1]],
   '03': [[0,0],[-1,0],[ 2,0],[-1, 2],[ 2,-1]],
 };
-const KICKS_O = { }; // O never kicks; rotation is a no-op for it.
+// 180-degree rotation. Guideline SRS has no 180 table; this is TETR.IO's
+// SRS+ table, six tests, the same for every piece, y-up like the tables
+// above. (Taken from agent-8.)
+const KICKS_180 = {
+  '02': [[0,0],[ 0, 1],[ 1, 1],[-1, 1],[ 1,0],[-1,0]],
+  '20': [[0,0],[ 0,-1],[-1,-1],[ 1,-1],[-1,0],[ 1,0]],
+  '13': [[0,0],[ 1, 0],[ 1, 2],[ 1, 1],[ 0,2],[ 0,1]],
+  '31': [[0,0],[-1, 0],[-1, 2],[-1, 1],[ 0,2],[ 0,1]],
+};
+const NO_KICK = [[0, 0]]; // O never kicks; rotation is a no-op for it.
 
 function kicksFor(id, from, to) {
-  if (id === PIECES.I.id) return KICKS_I[`${from}${to}`];
-  if (id === PIECES.O.id) return [[0, 0]];
-  return KICKS_JLSTZ[`${from}${to}`];
+  if (id === PIECES.O.id) return NO_KICK;
+  const key = `${from}${to}`;
+  if ((to - from + 4) % 4 === 2) return KICKS_180[key];
+  return (id === PIECES.I.id ? KICKS_I : KICKS_JLSTZ)[key];
+}
+
+// Seeded PRNG (mulberry32) so a game can be replayed with the same bag.
+// (Taken from agent-1.)
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function randomSeed() {
+  return (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
 }
 
 // 7-bag randomizer: every run of seven pieces contains each tetromino once.

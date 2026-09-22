@@ -32,7 +32,8 @@ class Input {
   }
 
   // Returns true if the key was handled (caller should preventDefault).
-  press(code) {
+  // mods.shift: Shift+R replays the current seed instead of drawing a new one.
+  press(code, mods = {}) {
     const g = this.game;
     switch (code) {
       case 'ArrowLeft':  this.startShift(-1, false); return true;
@@ -40,10 +41,11 @@ class Input {
       case 'ArrowDown':  g.setSoftDrop(true); return true;
       case 'ArrowUp': case 'KeyX': g.rotate(1); return true;
       case 'KeyZ': case 'ControlLeft': case 'ControlRight': g.rotate(-1); return true;
+      case 'KeyA': g.rotate(2); return true;
       case 'Space': g.hardDrop(); return true;
       case 'KeyC': case 'ShiftLeft': case 'ShiftRight': g.swapHold(); return true;
       case 'KeyP': case 'Escape': g.togglePause(); return true;
-      case 'KeyR': g.reset(); this.releaseAll(); return true;
+      case 'KeyR': g.reset(mods.shift ? g.seed : undefined); this.releaseAll(); return true;
       default: return false;
     }
   }
@@ -90,7 +92,7 @@ class Input {
   attach(win, doc) {
     win.addEventListener('keydown', e => {
       if (e.repeat) { if (this.isGameKey(e.code)) e.preventDefault(); return; }
-      if (this.press(e.code)) e.preventDefault();
+      if (this.press(e.code, { shift: e.shiftKey })) e.preventDefault();
     });
     win.addEventListener('keyup', e => { if (this.release(e.code)) e.preventDefault(); });
     win.addEventListener('blur', () => this.releaseAll());
@@ -100,6 +102,6 @@ class Input {
   }
 
   isGameKey(code) {
-    return /^(Arrow(Left|Right|Up|Down)|Space|Key[XZCPR]|Shift(Left|Right)|Control(Left|Right)|Escape)$/.test(code);
+    return /^(Arrow(Left|Right|Up|Down)|Space|Key[XZACPR]|Shift(Left|Right)|Control(Left|Right)|Escape)$/.test(code);
   }
 }

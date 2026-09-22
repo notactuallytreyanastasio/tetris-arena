@@ -12,14 +12,15 @@ html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
 body { display: flex; align-items: center; justify-content: center; min-height: 100vh; }
 
 .arena { display: flex; gap: 20px; align-items: flex-start; padding: 16px; }
-.panel { display: flex; flex-direction: column; gap: 16px; width: 140px; }
+.panel { display: flex; flex-direction: column; gap: 16px; width: 168px; }
 .box { background: var(--panel); border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; }
 .box h2 { margin: 0 0 6px; font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
 .stats p { margin: 0 0 12px; font-size: 22px; color: var(--accent); }
 .stats p:last-child { margin-bottom: 0; }
+.stats p.small { font-size: 12px; color: var(--muted); }
 .keys dl { margin: 0; display: grid; grid-template-columns: auto 1fr; gap: 3px 8px; font-size: 11px; }
 .keys dt { color: var(--accent); white-space: nowrap; }
-.keys dd { margin: 0; color: var(--muted); }
+.keys dd { margin: 0; color: var(--muted); white-space: nowrap; }
 canvas { display: block; }
 #hold, #next { margin: 0 auto; }
 

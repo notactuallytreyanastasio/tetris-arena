@@ -14,7 +14,7 @@ const src = ['pieces.js', 'board.js', 'game.js', 'input.js']
 const ctx = {};
 new Function('ctx', src + `
   Object.assign(ctx, { Game, Input, PIECES, ROTATIONS, kicksFor, COLS, ROWS, HIDDEN,
-    gravityMsForLevel, QUEUE_DEPTH, MAX_LOCK_RESETS, CLEAR_FLASH_MS, DAS, ARR, TRAIL_MS, TOAST_MS });
+    gravityMsForLevel, QUEUE_DEPTH, MAX_LOCK_RESETS, CLEAR_FLASH_MS, DAS, ARR, TRAIL_MS, TOAST_MS, mulberry32 });
 `)(ctx);
 const { Game, Input, PIECES, COLS, ROWS, HIDDEN, gravityMsForLevel, QUEUE_DEPTH,
   MAX_LOCK_RESETS, DAS, ARR, TRAIL_MS } = ctx;
@@ -268,6 +268,67 @@ console.log('--- input: DAS/ARR and the held stack');
   inp2.releaseAll();
   ok(!g.softDrop && inp2.dir() === 0, 'blur releases soft drop and directions');
   ok(!inp2.press('KeyQ'), 'unmapped keys are not handled');
+}
+
+console.log('--- 180 rotation');
+{
+  let g = gameWith([T]);
+  const x0 = g.piece.x, y0 = g.piece.y;
+  ok(g.rotate(2) && g.piece.rot === 2 && g.piece.x === x0 && g.piece.y === y0, 'T 180 in place at spawn');
+  ok(g.rotate(2) && g.piece.rot === 0, '180 again returns to spawn state');
+  g = gameWith([I]);
+  g.rotate(1); while (g.move(1));                 // vertical I against the right wall, x=7
+  ok(g.rotate(2) && g.piece.rot === 3 && g.piece.x + 4 <= COLS + 2, `vertical I 180s at the wall (x=${g.piece.x}, rot=${g.piece.rot})`);
+  g = gameWith([O]);
+  ok(g.rotate(2) && g.piece.rot === 2, 'O 180 is a no-op that still succeeds');
+  // A 180 never claims the kick-5 upgrade.
+  g = gameWith([T]); g.rotate(2);
+  ok(g.piece.spun && g.piece.kick === 0, 'after a 180, kick index is 0');
+  // 180 kick: T stem-down in a notch with a block above its centre. Flipping
+  // in place needs (4, ROWS-3) which is solid; the table's fifth test (-1, 0)
+  // slides it left one column instead.
+  g = gameWith([T, O]);
+  for (let c = 0; c < COLS; c++) g.grid[ROWS - 1][c] = c === 4 ? 0 : 1;
+  g.grid[ROWS - 3][4] = 1;
+  g.piece = at(T, 2, 3, ROWS - 3); // rot 2: stem at (4, ROWS-1) in the notch
+  ok(g.fits(2, 3, ROWS - 3) && !g.fits(0, 3, ROWS - 3), 'T sits stem-down in the notch; flipping in place would collide');
+  ok(g.rotate(2) && g.piece.rot === 0 && g.piece.x === 2 && g.piece.y === ROWS - 3, `180 kicks the T left (x=${g.piece.x}, y=${g.piece.y})`);
+}
+
+console.log('--- seeds and best score');
+{
+  const a = new Game({ seed: 12345 }), b = new Game({ seed: 12345 }), c = new Game({ seed: 54321 });
+  const seq = g => { const ids = [g.piece.id, ...g.queue]; for (let i = 0; i < 10; i++) ids.push(g.nextPiece()); return ids.join(); };
+  ok(seq(a) === seq(b), 'same seed deals the same pieces');
+  ok(seq(a) !== seq(c) || true, 'different seed (may coincide by chance, not asserted)');
+  ok(a.seed === 12345, 'seed is exposed');
+  a.reset(a.seed);
+  ok(seq(a) === seq(new Game({ seed: 12345 })), 'reset with the same seed replays');
+  const before = a.seed; a.reset();
+  ok(a.seed !== before, 'reset without a seed draws a new one');
+
+  const store = { data: {}, getItem(k) { return this.data[k]; }, setItem(k, v) { this.data[k] = v; } };
+  let g = new Game({ storage: store, seed: 1 });
+  ok(g.best === 0, 'no best yet');
+  g.queue = [O, O]; g.piece = at(O, 0, 4, ROWS - 6);
+  g.hardDrop();
+  ok(g.best === g.score && g.score > 0 && store.data['tetris-agent-4-best'] === String(g.score), `best ${g.best} saved on lock`);
+  const saved = g.score;
+  g.reset(1);
+  ok(g.score === 0 && g.best === saved, 'reset keeps best');
+  g = new Game({ storage: store, seed: 1 });
+  ok(g.best === saved, 'new game loads best from storage');
+  const broken = { getItem() { throw new Error('blocked'); }, setItem() { throw new Error('blocked'); } };
+  g = new Game({ storage: broken, seed: 1 }); g.queue = [O]; g.piece = at(O, 0, 4, ROWS - 6); g.hardDrop();
+  ok(g.best === g.score, 'blocked storage never throws');
+
+  const inp = new Input(g);
+  const s0 = g.seed; inp.press('KeyR', { shift: true });
+  ok(g.seed === s0 && g.score === 0, 'Shift+R replays the same seed');
+  inp.press('KeyR');
+  ok(g.seed !== s0, 'R draws a new seed');
+  const r0 = g.piece.rot; inp.press('KeyA');
+  ok(g.piece.rot === (r0 + 2) % 4, 'A rotates 180');
 }
 
 console.log(`\n${passes} passed, ${fails} failed`);

@@ -25,15 +25,37 @@ function gravityMsForLevel(level) {
   return Math.pow(0.8 - l * 0.007, l) * 1000;
 }
 
+const BEST_KEY = 'tetris-agent-4-best';
+
 class Game {
-  constructor(rng = Math.random) {
-    this.rng = rng;
-    this.reset();
+  // opts.seed: bag seed to start with (a fresh one is drawn if absent).
+  // opts.storage: anything with getItem/setItem (localStorage in the browser,
+  // a plain object in tests, nothing at all is fine too).
+  constructor(opts = {}) {
+    if (typeof opts === 'function') opts = { rng: opts }; // legacy: Game(rng)
+    this.rng = opts.rng || null;
+    this.storage = opts.storage || null;
+    this.best = this.loadBest();
+    this.reset(opts.seed);
   }
 
-  reset() {
+  loadBest() {
+    try { return Number(this.storage && this.storage.getItem(BEST_KEY)) || 0; } catch (e) { return 0; }
+  }
+  saveBest() {
+    try { if (this.storage) this.storage.setItem(BEST_KEY, String(this.best)); } catch (e) { /* private mode */ }
+  }
+
+  addScore(points) {
+    this.score += points;
+    if (this.score > this.best) this.best = this.score;
+  }
+
+  // seed: replay this bag; undefined draws a new one. (Seeding via agent-1.)
+  reset(seed) {
+    this.seed = seed === undefined ? randomSeed() : seed >>> 0;
     this.grid = createGrid();
-    this.nextPiece = makeBag(this.rng);
+    this.nextPiece = makeBag(this.rng || mulberry32(this.seed));
     this.queue = [];            // upcoming piece ids, QUEUE_DEPTH long
     this.hold = 0;              // held piece id, 0 = none
     this.holdUsed = false;      // hold is once per piece
@@ -147,8 +169,8 @@ class Game {
     return true;
   }
 
-  // dir = +1 clockwise, -1 counter-clockwise. Walks the SRS kick table for
-  // the (from, to) pair; the first offset that fits wins.
+  // dir = +1 clockwise, -1 counter-clockwise, 2 for a 180. Walks the kick
+  // table for the (from, to) pair; the first offset that fits wins.
   rotate(dir) {
     if (!this.active()) return false;
     const from = this.piece.rot;
@@ -162,7 +184,9 @@ class Game {
         this.piece.x = x;
         this.piece.y = y;
         this.piece.spun = true;
-        this.piece.kick = i;
+        // The fifth-kick T-spin upgrade is defined for the 90-degree tables;
+        // after a 180 the corner rule alone decides. (Rule via agent-6.)
+        this.piece.kick = dir === 2 ? 0 : i;
         this.touched();
         return true;
       }
@@ -190,7 +214,7 @@ class Game {
     const shape = this.shape(), x = this.piece.x, fromY = this.piece.y;
     let rows = 0;
     while (this.step()) rows++;
-    this.score += 2 * rows;
+    this.addScore(2 * rows);
     if (rows > 0) {
       // One streak per column of the piece, from its old top cell to its new one.
       const cols = [];
@@ -215,6 +239,7 @@ class Game {
   lock() {
     const shape = this.shape();
     merge(this.grid, shape, this.piece.x, this.piece.y, this.piece.id);
+    if (this.best === this.score && this.score > 0) this.saveBest();
     if (entirelyHidden(shape, this.piece.y)) {
       this.status = 'over';   // lock-out
       return;
@@ -226,7 +251,7 @@ class Game {
       // A T-spin with no lines still scores (400 / mini 100) and keeps b2b.
       if (spin) {
         const pts = (spin === 'full' ? TSPIN_SCORE[0] : MINI_SCORE[0]) * this.level;
-        this.score += pts;
+        this.addScore(pts);
         this.toast(`${spin === 'mini' ? 'MINI ' : ''}T-SPIN +${pts}`);
       }
       this.spawn();
@@ -256,7 +281,7 @@ class Game {
 
     this.combo += 1;
     points += COMBO_SCORE * this.combo * this.level;
-    this.score += points;
+    this.addScore(points);
     this.lines += n;
     this.level = 1 + Math.floor(this.lines / LINES_PER_LEVEL);
 
@@ -267,7 +292,7 @@ class Game {
 
     if (this.grid.every(row => row.every(v => v === 0))) {
       const bonus = PERFECT_SCORE[n] * this.level;
-      this.score += bonus;
+      this.addScore(bonus);
       this.toast(`PERFECT CLEAR +${bonus}`);
     }
     this.spawn();
@@ -311,7 +336,7 @@ class Game {
     while (this.gravityAcc >= interval) {
       this.gravityAcc -= interval;
       if (!this.step()) break;
-      if (this.softDrop) this.score += 1;
+      if (this.softDrop) this.addScore(1);
     }
   }
 }
