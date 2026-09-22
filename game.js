@@ -10,7 +10,7 @@
   // ---------------------------------------------------------------- pieces
 
   const COLS = 10;
-  const HIDDEN = 2;              // buffer rows above the visible field
+  const HIDDEN = 4;              // buffer rows above the visible field; SRS kicks lift up to 2
   const VISIBLE = 20;
   const ROWS = VISIBLE + HIDDEN; // 22
   const CELL = 30;               // css px per cell; canvas is scaled by DPR
@@ -88,19 +88,61 @@
     for (let i = 0; i < 4; i++) {
       const x = px + cells[i][0];
       const y = py + cells[i][1];
-      if (x < 0 || x >= COLS || y >= ROWS) return true;
-      if (y >= 0 && board[y * COLS + x]) return true;
+      if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return true;
+      if (board[y * COLS + x]) return true;
     }
     return false;
   }
 
+  // Stamp the piece. Returns true if every cell landed in the hidden rows,
+  // which is a lock-out: the player never saw it settle, the game is over.
   function lock(p) {
     const cells = PIECES[p.id].cells[p.rot];
+    let visible = false;
     for (let i = 0; i < 4; i++) {
       const x = p.x + cells[i][0];
       const y = p.y + cells[i][1];
-      if (y >= 0) board[y * COLS + x] = p.id;
+      board[y * COLS + x] = p.id;
+      if (y >= HIDDEN) visible = true;
     }
+    return !visible;
+  }
+
+  // Bottom-up scan. After copyWithin drops the rows above a full row by
+  // one, the same index holds a new row, so it is examined again before
+  // moving up. No allocation.
+  function clearLines() {
+    let cleared = 0;
+    for (let y = ROWS - 1; y >= 0; ) {
+      let full = true;
+      for (let x = 0; x < COLS; x++) if (!board[y * COLS + x]) { full = false; break; }
+      if (full) {
+        board.copyWithin(COLS, 0, y * COLS);
+        board.fill(0, 0, COLS);
+        cleared++;
+      } else {
+        y--;
+      }
+    }
+    return cleared;
+  }
+
+  // Guideline gravity: seconds per row at a level, capped at level 20.
+  function gravityMs(level) {
+    const l = Math.min(level, 20) - 1;
+    return Math.pow(0.8 - l * 0.007, l) * 1000;
+  }
+
+  // 7-bag: deal all seven in random order, then refill.
+  function nextFromBag() {
+    if (state.bag.length === 0) {
+      state.bag = [1, 2, 3, 4, 5, 6, 7];
+      for (let i = 6; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [state.bag[i], state.bag[j]] = [state.bag[j], state.bag[i]];
+      }
+    }
+    return state.bag.pop();
   }
 
   // ---------------------------------------------------------------- state
@@ -111,12 +153,19 @@
   const LOCK_RESETS = 15;  // moves/rotates that may reset the delay per row reached
   const SOFT_DROP = 20;    // soft drop is gravity times this
 
+  const LINE_SCORE = [0, 100, 300, 500, 800];
+
   const state = {
     piece: null,        // { id, rot, x, y, lowest, resets }
-    gravityMs: 800,
+    bag: [],
+    gravityMs: 1000,
     gravityAcc: 0,
     lockAcc: 0,
     over: false,
+    score: 0,
+    lines: 0,
+    level: 1,
+    b2b: false,         // last clear was a tetris
     // input
     hDir: 0,            // -1, 0, 1: direction currently auto-repeating
     dasAcc: 0,
@@ -125,15 +174,35 @@
   };
 
   function spawn() {
-    const id = 1 + Math.floor(Math.random() * 7);
+    const id = nextFromBag();
     const size = PIECES[id].size;
     const p = { id, rot: 0, x: Math.floor((COLS - size) / 2), y: HIDDEN - 1, lowest: HIDDEN - 1, resets: 0 };
     if (collides(id, 0, p.x, p.y)) p.y -= 1;          // guideline: try one row up
-    if (collides(id, 0, p.x, p.y)) { state.over = true; return null; }
+    if (collides(id, 0, p.x, p.y)) { gameOver(); return p; } // block-out; keep it for drawing
     state.lockAcc = 0;
     state.gravityAcc = 0;
     return p;
   }
+
+  function gameOver() {
+    state.over = true;
+    showOverlay('Game over', 'R to restart');
+  }
+
+  function reset() {
+    board.fill(0);
+    state.bag = [];
+    state.score = 0; state.lines = 0; state.level = 1; state.b2b = false;
+    state.gravityMs = gravityMs(1);
+    state.gravityAcc = 0; state.lockAcc = 0;
+    state.over = false;
+    state.hDir = 0; state.soft = false; held.clear();
+    hideOverlay();
+    state.piece = spawn();
+    updateHud();
+  }
+
+  function addScore(n) { state.score += n; }
 
   function grounded(p) {
     return collides(p.id, p.rot, p.x, p.y + 1);
@@ -172,14 +241,28 @@
   }
 
   function lockPiece() {
-    lock(state.piece);
+    const lockedOut = lock(state.piece);
+    if (lockedOut) { gameOver(); return; }
+    const n = clearLines();
+    if (n) {
+      let pts = LINE_SCORE[n] * state.level;
+      if (n === 4 && state.b2b) pts = Math.floor(pts * 1.5);
+      state.b2b = n === 4;
+      addScore(pts);
+      state.lines += n;
+      const level = 1 + Math.floor(state.lines / 10);
+      if (level !== state.level) { state.level = level; state.gravityMs = gravityMs(level); }
+    }
     state.piece = spawn();
+    updateHud();
   }
 
   function hardDrop() {
     const p = state.piece;
     if (!p) return;
-    while (!collides(p.id, p.rot, p.x, p.y + 1)) p.y++;
+    let rows = 0;
+    while (!collides(p.id, p.rot, p.x, p.y + 1)) { p.y++; rows++; }
+    addScore(rows * 2);
     lockPiece();
   }
 
@@ -187,6 +270,7 @@
     const p = state.piece;
     if (!collides(p.id, p.rot, p.x, p.y + 1)) {
       p.y += 1;
+      if (state.soft) addScore(1);
       if (p.y > p.lowest) { p.lowest = p.y; p.resets = 0; state.lockAcc = 0; }
     }
     // if grounded, the lock timer in update() handles locking
@@ -237,6 +321,8 @@
 
   function onKeyDown(e) {
     if (e.repeat) return; // we do our own repeat
+    if (e.code === 'KeyR') { reset(); e.preventDefault(); return; }
+    if (state.over) return;
     switch (e.code) {
       case 'ArrowLeft':  held.add(e.code); press(-1); break;
       case 'ArrowRight': held.add(e.code); press(1); break;
@@ -276,9 +362,34 @@
     const dt = Math.min(now - last, 100); // a backgrounded tab must not fast-forward
     last = now;
     update(dt);
+    updateHud();
     draw();
     requestAnimationFrame(frame);
   }
+
+  // ---------------------------------------------------------------- hud
+
+  const hud = {
+    score: document.getElementById('score'),
+    level: document.getElementById('level'),
+    lines: document.getElementById('lines'),
+  };
+  const shown = { score: -1, level: -1, lines: -1 };
+  function updateHud() {
+    for (const k of Object.keys(hud)) {
+      if (shown[k] !== state[k]) { shown[k] = state[k]; hud[k].textContent = String(state[k]); }
+    }
+  }
+
+  const overlay = document.getElementById('overlay');
+  const overlayTitle = document.getElementById('overlay-title');
+  const overlaySub = document.getElementById('overlay-sub');
+  function showOverlay(title, sub) {
+    overlayTitle.textContent = title;
+    overlaySub.textContent = sub;
+    overlay.classList.remove('hidden');
+  }
+  function hideOverlay() { overlay.classList.add('hidden'); }
 
   // ---------------------------------------------------------------- draw
 
@@ -335,9 +446,9 @@
 
   // ---------------------------------------------------------------- go
 
-  state.piece = spawn();
+  reset();
   requestAnimationFrame((t) => { last = t; frame(t); });
 
   // Debug handle for headless harnesses and the devtools console.
-  window.__tetris = { PIECES, KICKS, board, state, collides, lock, spawn, stepGravity, tryMove, tryRotate, hardDrop, update, frame, COLS, ROWS, HIDDEN };
+  window.__tetris = { PIECES, KICKS, board, state, collides, lock, clearLines, gravityMs, spawn, reset, stepGravity, tryMove, tryRotate, hardDrop, update, frame, COLS, ROWS, HIDDEN };
 })();
