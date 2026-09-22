@@ -158,16 +158,20 @@ class Renderer {
 
     this.drawPanels(game);
 
-    if (game.over) {
-      ctx.fillStyle = 'rgba(0,0,0,0.6)';
-      ctx.fillRect(0, 0, this.w, this.h);
-      ctx.fillStyle = '#fff';
-      ctx.font = 'bold 28px system-ui, sans-serif';
-      ctx.textAlign = 'center';
-      ctx.fillText('GAME OVER', this.w / 2, this.h / 2 - 10);
-      ctx.font = '16px system-ui, sans-serif';
-      ctx.fillStyle = '#c8cdd6';
-      ctx.fillText('press R to restart', this.w / 2, this.h / 2 + 20);
-    }
+    if (game.over) this.overlay('GAME OVER', 'press R to restart');
+    else if (game.paused) this.overlay('PAUSED', 'press P to resume');
+  }
+
+  overlay(title, hint) {
+    const ctx = this.ctx;
+    ctx.fillStyle = 'rgba(0,0,0,0.6)';
+    ctx.fillRect(0, 0, this.w, this.h);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold 28px system-ui, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillText(title, this.w / 2, this.h / 2 - 10);
+    ctx.font = '16px system-ui, sans-serif';
+    ctx.fillStyle = '#c8cdd6';
+    ctx.fillText(hint, this.w / 2, this.h / 2 + 20);
   }
 }

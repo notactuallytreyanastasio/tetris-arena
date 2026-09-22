@@ -56,6 +56,7 @@ class Game {
     this.lines = 0;
     this.score = 0;
     this.over = false;
+    this.paused = false;
     this.soft = false;
     this.b2b = false;   // last line clear was a tetris or T-spin
     this.combo = -1;    // consecutive locks that cleared lines, -1 = none
@@ -68,6 +69,13 @@ class Game {
     this.clearing = null;  // { rows, spin, acc } while full rows flash; no active piece
     this.active = null;
     this.spawn();
+  }
+
+  // Pause is just 'do not advance the clock': every timer is an accumulator
+  // fed by update(dt), so nothing else needs to know.
+  setPaused(on) {
+    if (this.over) return;
+    this.paused = on;
   }
 
   takeNext() {
@@ -102,7 +110,7 @@ class Game {
   // Swap the active piece with the hold slot, once per piece. The piece
   // coming out of hold spawns fresh: rotation 0 at the spawn position.
   swapHold() {
-    if (this.over || !this.active || this.holdUsed) return false;
+    if (this.over || this.paused || !this.active || this.holdUsed) return false;
     const parked = this.hold;
     this.hold = this.active.piece;
     this.spawn(parked || this.takeNext());
@@ -149,7 +157,7 @@ class Game {
   }
 
   move(dx) {
-    if (this.over || !this.active) return false;
+    if (this.over || this.paused || !this.active) return false;
     const ok = this.tryMove(dx, 0);
     if (ok) {
       this.active.spun = false;
@@ -162,7 +170,7 @@ class Game {
   // list for this (from, to) pair; the first offset that fits wins. Kick dy
   // is negated because the tables are written with +y up.
   rotate(dir) {
-    if (this.over || !this.active) return false;
+    if (this.over || this.paused || !this.active) return false;
     const a = this.active;
     const to = (a.rot + dir + 4) % 4;
     const kicks = kicksFor(a.piece, a.rot, to);
@@ -187,7 +195,7 @@ class Game {
   }
 
   hardDrop() {
-    if (this.over || !this.active) return;
+    if (this.over || this.paused || !this.active) return;
     let rows = 0;
     while (this.tryMove(0, 1)) rows++;
     if (rows > 0) this.active.spun = false;
@@ -289,7 +297,7 @@ class Game {
 
   // Advance the simulation by dt milliseconds.
   update(dt) {
-    if (this.over) return;
+    if (this.over || this.paused) return;
     this.clock += dt;
 
     if (this.clearing) {

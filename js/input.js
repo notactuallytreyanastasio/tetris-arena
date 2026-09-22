@@ -21,6 +21,25 @@ class Input {
     this.charged = false; // DAS elapsed; now repeating at ARR
     window.addEventListener('keydown', (e) => this.onKeyDown(e));
     window.addEventListener('keyup', (e) => this.onKeyUp(e));
+    // A keyup that happens while the window is not focused is never
+    // delivered, so a held direction would auto-repeat forever on return.
+    // Pause and drop every held key instead (agent-5, agent-6).
+    window.addEventListener('blur', () => this.pause(true));
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) this.pause(true);
+    });
+  }
+
+  releaseAll() {
+    this.left = this.right = this.down = false;
+    this.dir = 0;
+    this.game.softDrop(false);
+  }
+
+  pause(on) {
+    if (this.game.over || this.game.paused === on) return;
+    this.game.setPaused(on);
+    if (on) this.releaseAll();
   }
 
   startShift(dir) {
@@ -34,6 +53,7 @@ class Input {
     if (e.repeat) return;
     const g = this.game;
     switch (e.code) {
+      case 'KeyP': case 'Escape': this.pause(!g.paused); break;
       case 'ArrowLeft':  this.left = true;  this.startShift(-1); break;
       case 'ArrowRight': this.right = true; this.startShift(1); break;
       case 'ArrowDown':  this.down = true; g.softDrop(true); break;
@@ -42,7 +62,7 @@ class Input {
       case 'KeyA': g.rotate(2); break;
       case 'KeyC': case 'ShiftLeft': case 'ShiftRight': g.swapHold(); break;
       case 'Space': g.hardDrop(); break;
-      case 'KeyR': g.reset(); break;
+      case 'KeyR': this.releaseAll(); g.reset(); break;
       default: return;
     }
     e.preventDefault();

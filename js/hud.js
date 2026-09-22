@@ -30,6 +30,13 @@ class Hud {
     this.set('lines', String(g.lines));
     const lc = g.lastClear;
     const fresh = lc && g.clock - lc.at < CLEAR_LABEL_MS;
+    // key on the timestamp too, so two identical clears in a row both pop
     this.set('clear', fresh ? lc.label + '  +' + lc.points : '');
+    if (fresh && this.shownAt !== lc.at) {
+      this.shownAt = lc.at;
+      this.el.clear.classList.remove('pop');
+      void this.el.clear.offsetWidth;
+      this.el.clear.classList.add('pop');
+    }
   }
 }
