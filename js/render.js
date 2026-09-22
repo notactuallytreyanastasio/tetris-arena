@@ -2,10 +2,23 @@
 
 const CELL = 30;
 
+// Size a canvas in CSS pixels but back it at devicePixelRatio so cell edges
+// are crisp on retina. Draw code keeps working in CSS-pixel units.
+// (Taken from agent-1's fitCanvas; here it also returns the context.)
+function fitCanvas(canvas, cssW, cssH) {
+  const dpr = (typeof window !== 'undefined' && window.devicePixelRatio) || 1;
+  canvas.width = Math.round(cssW * dpr);
+  canvas.height = Math.round(cssH * dpr);
+  canvas.style.width = cssW + 'px';
+  canvas.style.height = cssH + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return ctx;
+}
+
 function makeRenderer(boardCanvas) {
-  const ctx = boardCanvas.getContext('2d');
-  boardCanvas.width = COLS * CELL;
-  boardCanvas.height = VISIBLE_ROWS * CELL;
+  const W = COLS * CELL, H = VISIBLE_ROWS * CELL;
+  const ctx = fitCanvas(boardCanvas, W, H);
 
   function cell(x, y, color, alpha = 1) {
     const px = x * CELL, py = y * CELL;
@@ -46,7 +59,7 @@ function makeRenderer(boardCanvas) {
 
   function draw(game) {
     ctx.fillStyle = '#0a0b0f';
-    ctx.fillRect(0, 0, boardCanvas.width, boardCanvas.height);
+    ctx.fillRect(0, 0, W, H);
     drawGridLines();
 
     for (let r = HIDDEN; r < ROWS; r++) {

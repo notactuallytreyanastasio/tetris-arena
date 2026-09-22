@@ -5,10 +5,13 @@
 // whichever timer is live (gravity, lock delay) and fires when it overflows.
 
 const LOCK_DELAY_MS = 500;
+const MAX_LOCK_RESETS = 15;   // guideline "move reset": a piece cannot be stalled forever
+const SOFT_DROP_FACTOR = 20;  // soft drop is 20x gravity
 
 // Guideline gravity: seconds per row = (0.8 - (level-1)*0.007)^(level-1).
+// Level 1 = 1000ms, 5 = 355ms, 10 = 64ms, 15 = 7ms. Clamped at level 20.
 function gravityMsForLevel(level) {
-  const l = Math.min(level, 20) - 1;
+  const l = Math.min(Math.max(level, 1), 20) - 1;
   return Math.pow(0.8 - l * 0.007, l) * 1000;
 }
 
@@ -26,8 +29,10 @@ class Game {
     this.lines = 0;
     this.level = 1;
     this.status = 'playing';    // 'playing' | 'paused' | 'over'
+    this.softDrop = false;
     this.gravityAcc = 0;
     this.lockAcc = 0;
+    this.lockResets = 0;
     this.spawn();
   }
 
@@ -45,6 +50,7 @@ class Game {
     this.piece = { id, rot: 0, x, y };
     this.gravityAcc = 0;
     this.lockAcc = 0;
+    this.lockResets = 0;
     if (collides(this.grid, shape, x, y)) {
       this.status = 'over';
     }
@@ -57,6 +63,54 @@ class Game {
   grounded() {
     return !this.fits(this.piece.rot, this.piece.x, this.piece.y + 1);
   }
+
+  // A successful move or rotate while resting on the stack restarts the lock
+  // delay, up to MAX_LOCK_RESETS times per piece.
+  touched() {
+    if (this.grounded() && this.lockResets < MAX_LOCK_RESETS) {
+      this.lockAcc = 0;
+      this.lockResets++;
+    }
+  }
+
+  // ---- player actions ------------------------------------------------------
+
+  move(dx) {
+    if (this.status !== 'playing') return false;
+    if (!this.fits(this.piece.rot, this.piece.x + dx, this.piece.y)) return false;
+    this.piece.x += dx;
+    this.touched();
+    return true;
+  }
+
+  // dir = +1 clockwise, -1 counter-clockwise. Walks the SRS kick table for
+  // the (from, to) pair; the first offset that fits wins.
+  rotate(dir) {
+    if (this.status !== 'playing') return false;
+    const from = this.piece.rot;
+    const to = (from + dir + 4) % 4;
+    for (const [dx, dy] of kicksFor(this.piece.id, from, to)) {
+      const x = this.piece.x + dx, y = this.piece.y - dy; // table dy is "up"
+      if (this.fits(to, x, y)) {
+        this.piece.rot = to;
+        this.piece.x = x;
+        this.piece.y = y;
+        this.touched();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  hardDrop() {
+    if (this.status !== 'playing') return;
+    while (this.step()) this.score += 2;
+    this.lock();
+  }
+
+  setSoftDrop(on) { this.softDrop = on; }
+
+  // ---- rules ---------------------------------------------------------------
 
   lock() {
     merge(this.grid, this.shape(), this.piece.x, this.piece.y, this.piece.id);
@@ -81,12 +135,13 @@ class Game {
       return;
     }
 
-    this.lockAcc = 0;
     this.gravityAcc += dt;
-    const interval = gravityMsForLevel(this.level);
+    let interval = gravityMsForLevel(this.level);
+    if (this.softDrop) interval /= SOFT_DROP_FACTOR;
     while (this.gravityAcc >= interval) {
       this.gravityAcc -= interval;
       if (!this.step()) break;
+      if (this.softDrop) this.score += 1;
     }
   }
 }
