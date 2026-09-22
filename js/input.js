@@ -8,7 +8,7 @@
 // direction while the other is still held resumes the other.
 
 const DAS = 160; // ms a direction is held before it starts auto-repeating
-const ARR = 30;  // ms between auto-repeat shifts once DAS has elapsed
+const ARR = 30;  // ms between auto-repeat shifts once DAS has elapsed; 0 = to the wall
 
 class Input {
   constructor(game) {
@@ -62,7 +62,8 @@ class Input {
       case 'KeyA': g.rotate(2); break;
       case 'KeyC': case 'ShiftLeft': case 'ShiftRight': g.swapHold(); break;
       case 'Space': g.hardDrop(); break;
-      case 'KeyR': this.releaseAll(); g.reset(); break;
+      // R restarts on a new seed; Shift+R replays the same one (agent-1).
+      case 'KeyR': this.releaseAll(); g.reset(e.shiftKey ? g.seed : undefined); break;
       default: return;
     }
     e.preventDefault();
@@ -88,14 +89,34 @@ class Input {
   }
 
   // Advance auto-shift by dt ms. Called once per frame before game.update.
+  // Runs while rows flash too, so a direction held through a clear is
+  // charged when the next piece appears (agent-10 found every game lost
+  // that). While there is no piece the accumulator is clamped to one ARR:
+  // stay charged, do not bank repeats, or the new piece would jump four
+  // cells on its first frame.
   update(dt) {
     if (this.dir === 0) return;
     this.acc += dt;
-    const threshold = this.charged ? ARR : DAS;
-    while (this.acc >= threshold) {
+    const active = !!this.game.active;
+    for (;;) {
+      const threshold = this.charged ? ARR : DAS;
+      if (this.acc < threshold) break;
+      if (!active) {
+        this.charged = true;
+        this.acc = Math.min(this.acc, ARR);
+        break;
+      }
       this.acc -= threshold;
       this.charged = true;
-      this.game.move(this.dir);
+      if (ARR === 0) {
+        while (this.game.move(this.dir)) {}
+        this.acc = 0;
+        break;
+      }
+      if (!this.game.move(this.dir)) {
+        this.acc = 0;
+        break;
+      }
     }
   }
 }

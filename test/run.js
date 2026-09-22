@@ -10,7 +10,7 @@ const path = require('path');
 const vm = require('vm');
 
 const root = path.join(__dirname, '..');
-const src = ['pieces', 'board', 'game']
+const src = ['pieces', 'board', 'game', 'input']
   .map((f) => fs.readFileSync(path.join(root, 'js', f + '.js'), 'utf8'))
   .join('\n');
 
@@ -20,8 +20,11 @@ const exportNames = [
   'PIECE_NAMES', 'PIECES', 'COLOR_BY_INDEX', 'KICKS_JLSTZ', 'KICKS_I', 'KICKS_180', 'kicksFor',
   'COLS', 'VISIBLE_ROWS', 'HIDDEN_ROWS', 'ROWS', 'Board',
   'gravityMs', 'LOCK_DELAY', 'LOCK_RESETS', 'NEXT_COUNT', 'CLEAR_FLASH_MS', 'SCORE', 'Bag', 'Game',
+  'mulberry32', 'TRAIL_MS', 'Input', 'DAS', 'ARR',
 ];
-const context = { console, Math };
+// input.js registers listeners on window/document at construction; stub them.
+const noop = { addEventListener() {}, hidden: false };
+const context = { console, Math, Date, window: noop, document: noop };
 vm.createContext(context);
 vm.runInContext(src + '\n;({' + exportNames.join(',') + '})', context);
 const core = vm.runInContext('({' + exportNames.join(',') + '})', context);
@@ -55,7 +58,7 @@ const t = {
   },
 };
 
-for (const f of ['m1', 'm2', 'm3', 'm4', 'm5']) {
+for (const f of ['m1', 'm2', 'm3', 'm4', 'm5', 'm6']) {
   console.log(f);
   require('./' + f + '.js')(t);
 }

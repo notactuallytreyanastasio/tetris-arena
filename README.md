@@ -1,14 +1,15 @@
 # Tetris, agent-8
 
 Open `index.html`. Plain HTML, CSS and JavaScript, no build step, no
-dependencies. `node test/run.js` runs 73 checks against the game core without
+dependencies. `node test/run.js` runs 90 checks against the game core without
 a browser.
 
     ← →        move (held: DAS 160 ms, then ARR 30 ms)
     ↑ / X      rotate clockwise        Z / Ctrl   rotate counter-clockwise
     A          rotate 180              C / Shift  hold
     ↓          soft drop               Space      hard drop
-    P / Esc    pause                   R          restart
+    P / Esc    pause                   R          restart on a new seed
+    Shift+R    replay the same seed
 
 ## Shape of the code
 
@@ -26,8 +27,10 @@ Seven classic `<script>` tags sharing one global scope. No ES modules, because
 | `js/hud.js`    | score / level / lines / clear label, change-only writes     | yes         |
 | `js/main.js`   | wires them up, runs the `requestAnimationFrame` loop        | yes         |
 
-The three DOM-free files are what `test/run.js` evaluates in a `vm` context.
-The tests drive `Game` directly: `g.move(-1)`, `g.rotate(2)`, `g.update(dt)`.
+The three DOM-free files, plus `input.js` against a stub `window`, are what
+`test/run.js` evaluates in a `vm` context. The tests drive `Game` directly:
+`g.move(-1)`, `g.rotate(2)`, `g.update(dt)`, and seed every game so a
+failure replays.
 
 ## The parts worth reading
 
@@ -61,8 +64,9 @@ adds one table of six tests, shared by every piece:
 
 `kicksFor()` picks it whenever `(to - from) mod 4 === 2`. A piece that
 spawned backwards is one press from right, and a T on the floor 180s up one
-row through test 2 instead of failing. None of the other nine games have it;
-agent-10 considered and rejected it.
+row through test 2 instead of failing. It started here; agent-6 and agent-9
+have since taken it. agent-7 and agent-10 rejected it because the SRS+ table
+cannot be checked against the Guideline's published tables, which is fair.
 
 **Board is `grid[y][x]` of piece indices, 10 wide, 24 tall, top 4 hidden.**
 Row arrays over a flat `Uint8Array` because collision is a nested loop anyone
@@ -100,6 +104,18 @@ and no active piece exists, so every input method null-guards. Then
 `finishClear()` collapses the rows, scores them, and spawns. Scoring waits
 for the collapse so the label and the board change land together.
 
+**The bag is seeded and the seed is in the URL.** `Game(seed)` builds the
+7-bag on a mulberry32 stream. The seed shows in the HUD and rides in
+`#seed=N`, so a reload or a shared link replays the same pieces. R restarts
+on a fresh seed, Shift+R replays the current one. The same mechanism pins
+the node tests.
+
+**Held direction survives a line clear.** `Input.update()` keeps charging
+DAS while rows flash and no piece exists. agent-10 found that every other
+game reset it there, a 160 ms hitch on every clear. While there is no piece
+the accumulator is clamped to one ARR: the next piece moves one cell on its
+first frame rather than four.
+
 **The lock timer is visible.** While a piece rests on the stack its fill
 lerps toward white by `lockAcc / LOCK_DELAY`, bevel unchanged. You can see
 the lock coming instead of being surprised by it.
@@ -126,6 +142,13 @@ graph, then changed. The graph has an `observation` node for each.
   agent-6**: outline ghost, both having found a filled ghost blends with the
   stack. **agent-6**: auto-pause on `visibilitychange` as well as `blur`.
 - **agent-3, agent-5, agent-6**: shipping the probes as a test runner.
+- **agent-1**: mulberry32 seeded bag, seed in the URL hash, Shift+R replay.
+  Changed: the seed is a constructor argument so tests pin it directly.
+- **agent-1, agent-10**: best score in `localStorage` behind try/catch.
+- **agent-4, agent-7**: hard-drop trail. Changed: tinted with the piece
+  colour instead of white.
+- **agent-10**: DAS keeps charging through the clear flash. Changed: added
+  the one-ARR clamp so the charge does not bank repeats.
 
 Added here and not seen elsewhere: the 180 rotation with SRS+ kicks, the
 perfect clear bonus (agent-5 has since taken it and said so), and the step
@@ -135,9 +158,10 @@ reset (agent-7 has taken it).
 
 - No touch or gamepad input. Keyboard only.
 - No sound.
-- No high score; the score is gone on reload.
-- DAS and ARR are constants, not settings. ARR 0 (instant to wall) is not
-  supported: the shift loop always moves one cell per ARR tick.
+- DAS and ARR are constants, not settings. ARR 0 means shift to the wall,
+  but there is no way to set it without editing `input.js`.
+- Best score is per browser and per origin; `file://` in some browsers
+  refuses `localStorage`, in which case it lasts until reload.
 - The 180 kick table is TETR.IO's, not verified against TETR.IO itself; the
   tests check that it is applied, not that every offset matches.
 - Level 20 is the gravity cap. Lines keep counting, speed does not.

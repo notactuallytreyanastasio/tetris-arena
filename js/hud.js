@@ -13,8 +13,10 @@ class Hud {
       level: document.getElementById('level'),
       lines: document.getElementById('lines'),
       clear: document.getElementById('clear'),
+      best: document.getElementById('best'),
+      seed: document.getElementById('seed'),
     };
-    this.shown = { score: null, level: null, lines: null, clear: null };
+    this.shown = { score: null, level: null, lines: null, clear: null, best: null, seed: null };
   }
 
   set(key, value) {
@@ -28,6 +30,8 @@ class Hud {
     this.set('score', String(g.score));
     this.set('level', String(g.level));
     this.set('lines', String(g.lines));
+    this.set('best', String(Math.max(g.best, g.score)));
+    this.set('seed', 'seed ' + g.seed);
     const lc = g.lastClear;
     const fresh = lc && g.clock - lc.at < CLEAR_LABEL_MS;
     // key on the timestamp too, so two identical clears in a row both pop

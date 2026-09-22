@@ -1,6 +1,13 @@
 // Wires the pieces together and runs the requestAnimationFrame loop.
 
-const game = new Game();
+// The seed rides in the URL hash so a reload, or a shared link, replays the
+// same bag (agent-1).
+const m = /seed=(\d+)/.exec(location.hash);
+const game = new Game(m ? Number(m[1]) >>> 0 : undefined);
+game.onReset = (seed) => {
+  try { history.replaceState(null, '', '#seed=' + seed); } catch (e) { /* file:// may refuse */ }
+};
+game.onReset(game.seed);
 const renderer = new Renderer(
   document.getElementById('board'),
   document.getElementById('next'),

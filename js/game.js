@@ -25,16 +25,43 @@ const SCORE = {
   b2b: 1.5,
 };
 
+const TRAIL_MS = 120;      // hard-drop streak lifetime
+const BEST_KEY = 'tetris-agent-8-best';
+
+// Seeded PRNG (mulberry32, from agent-1) so a game is replayable: the seed
+// is shown in the HUD and kept in the URL hash, Shift+R replays it, and the
+// node tests can pin one.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Best score lives in localStorage, which file:// and private windows may
+// refuse, so both directions are guarded (agent-1, agent-10).
+function loadBest() {
+  try { return Number(localStorage.getItem(BEST_KEY)) || 0; } catch (e) { return 0; }
+}
+function saveBest(n) {
+  try { localStorage.setItem(BEST_KEY, String(n)); } catch (e) { /* ignore */ }
+}
+
 // 7-bag randomiser: every piece exactly once per 7, so droughts are bounded.
 class Bag {
-  constructor() {
+  constructor(rng) {
+    this.rng = rng;
     this.queue = [];
   }
   next() {
     if (this.queue.length === 0) {
       const names = PIECE_NAMES.slice();
       for (let i = names.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
+        const j = Math.floor(this.rng() * (i + 1));
         [names[i], names[j]] = [names[j], names[i]];
       }
       this.queue = names;
@@ -44,14 +71,20 @@ class Bag {
 }
 
 class Game {
-  constructor() {
+  // seed: a number to replay, or undefined for a fresh game.
+  constructor(seed) {
     this.board = new Board();
-    this.reset();
+    this.best = loadBest();
+    this.onReset = null; // main.js hooks this to mirror the seed into the URL
+    this.reset(seed);
   }
 
-  reset() {
+  reset(seed) {
+    if (seed === undefined) seed = (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
+    this.seed = seed;
     this.board.reset();
-    this.bag = new Bag();
+    this.bag = new Bag(mulberry32(seed));
+    this.trail = null;  // { cols: [[x, fromY, toY]], color, ms } after a hard drop
     this.level = 1;
     this.lines = 0;
     this.score = 0;
@@ -69,6 +102,15 @@ class Game {
     this.clearing = null;  // { rows, spin, acc } while full rows flash; no active piece
     this.active = null;
     this.spawn();
+    if (this.onReset) this.onReset(seed);
+  }
+
+  endGame() {
+    this.over = true;
+    if (this.score > this.best) {
+      this.best = this.score;
+      saveBest(this.best);
+    }
   }
 
   // Pause is just 'do not advance the clock': every timer is an accumulator
@@ -100,7 +142,7 @@ class Game {
     };
     this.active = p;
     if (!this.board.fits(piece, 0, x, y)) {
-      this.over = true; // block out
+      this.endGame(); // block out
       return;
     }
     if (this.board.fits(piece, 0, x, y + 1)) p.y = p.lowestY = y + 1;
@@ -196,9 +238,21 @@ class Game {
 
   hardDrop() {
     if (this.over || this.paused || !this.active) return;
+    const a = this.active;
+    const fromY = a.y;
     let rows = 0;
     while (this.tryMove(0, 1)) rows++;
-    if (rows > 0) this.active.spun = false;
+    if (rows > 0) {
+      a.spun = false;
+      // One streak per column, from the column's old top cell to its new
+      // one, so the drop reads as motion rather than a teleport (agent-4).
+      const top = {};
+      for (const [cx, cy] of a.piece.states[a.rot]) {
+        if (top[cx] === undefined || cy < top[cx]) top[cx] = cy;
+      }
+      const cols = Object.keys(top).map((cx) => [a.x + Number(cx), fromY + top[cx], a.y + top[cx]]);
+      this.trail = { cols, color: a.piece.color, ms: TRAIL_MS };
+    }
     this.score += rows * 2;
     this.lock();
   }
@@ -274,7 +328,7 @@ class Game {
     const spin = this.tspinKind();
     const visible = this.board.merge(a.piece, a.rot, a.x, a.y);
     if (!visible) {
-      this.over = true; // lock out
+      this.endGame(); // lock out
       return;
     }
     const rows = this.board.fullRows();
@@ -299,6 +353,7 @@ class Game {
   update(dt) {
     if (this.over || this.paused) return;
     this.clock += dt;
+    if (this.trail && (this.trail.ms -= dt) <= 0) this.trail = null;
 
     if (this.clearing) {
       this.clearing.acc += dt;

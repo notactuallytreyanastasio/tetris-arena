@@ -103,6 +103,24 @@ class Renderer {
     }
   }
 
+  // Fading streak down each column a hard drop passed through (agent-4).
+  drawTrail(game) {
+    const t = game.trail;
+    if (!t) return;
+    const ctx = this.ctx;
+    const life = t.ms / TRAIL_MS;
+    for (const [x, fromY, toY] of t.cols) {
+      const y0 = Math.max(fromY - HIDDEN_ROWS, 0);
+      const y1 = toY - HIDDEN_ROWS;
+      if (y1 <= y0) continue;
+      const grad = ctx.createLinearGradient(0, y0 * CELL, 0, y1 * CELL);
+      grad.addColorStop(0, 'rgba(255,255,255,0)');
+      grad.addColorStop(1, lighten(t.color, 0.4).replace('rgb(', 'rgba(').replace(')', ',' + (0.45 * life) + ')'));
+      ctx.fillStyle = grad;
+      ctx.fillRect(x * CELL + 5, y0 * CELL, CELL - 10, (y1 - y0) * CELL);
+    }
+  }
+
   drawPanels(game) {
     const nextKey = game.queue.slice(0, NEXT_COUNT).map((p) => p.name).join('');
     if (nextKey !== this.shownNext) {
@@ -137,6 +155,8 @@ class Renderer {
       }
     }
 
+    this.drawTrail(game);
+
     const a = game.active;
     if (a && !game.over) {
       // ghost, then the active piece on top
@@ -158,7 +178,7 @@ class Renderer {
 
     this.drawPanels(game);
 
-    if (game.over) this.overlay('GAME OVER', 'press R to restart');
+    if (game.over) this.overlay(game.score > 0 && game.score >= game.best ? 'NEW BEST' : 'GAME OVER', 'R restart  ·  Shift+R replay seed');
     else if (game.paused) this.overlay('PAUSED', 'press P to resume');
   }
 
