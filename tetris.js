@@ -162,22 +162,41 @@ function filledOrWall(board, x, y) {
   return board[y * COLS + x] !== 0;
 }
 
-// Clear every full row. Scan bottom-up; when a row is full, shift everything
-// above it down one row with copyWithin and zero the top row. Returns count.
-function clearLines(board) {
-  let cleared = 0;
-  for (let y = TOTAL - 1; y >= 0; y--) {
+// Indices of every full row, top to bottom.
+function fullRows(board) {
+  const rows = [];
+  for (let y = 0; y < TOTAL; y++) {
     let full = true;
     for (let x = 0; x < COLS; x++) {
       if (!board[y * COLS + x]) { full = false; break; }
     }
-    if (!full) continue;
+    if (full) rows.push(y);
+  }
+  return rows;
+}
+
+// Remove the given rows (ascending order). For each, shift everything above
+// it down one row with copyWithin and zero the top row. Rows above the one
+// removed shift down, so later indices in the list are unaffected.
+function collapse(board, rows) {
+  for (const y of rows) {
     board.copyWithin(COLS, 0, y * COLS);
     board.fill(0, 0, COLS);
-    cleared++;
-    y++; // re-examine this row: it now holds what was above it
   }
-  return cleared;
+  return rows.length;
+}
+
+function clearLines(board) {
+  return collapse(board, fullRows(board));
+}
+
+// Would removing these rows leave the board empty? (Perfect clear.)
+function emptyExcept(board, rows) {
+  for (let y = 0; y < TOTAL; y++) {
+    if (rows.includes(y)) continue;
+    for (let x = 0; x < COLS; x++) if (board[y * COLS + x]) return false;
+  }
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -215,6 +234,11 @@ const SOFT_DROP_MULT = 20;  // soft drop is this many times gravity
 const LINES_PER_LEVEL = 10;
 const CLEAR_SCORE = [0, 100, 300, 500, 800];        // guideline, x level
 const TSPIN_SCORE = [400, 800, 1200, 1600];         // T-spin with 0..3 lines
+const PERFECT_SCORE = [0, 800, 1200, 1800, 2000];   // perfect clear, x level
+const COMBO_SCORE = 50;                             // x combo x level
+const CLEAR_FLASH = 120;    // ms full rows stay lit before collapsing
+const LOCK_FLASH = 80;      // ms a just-locked piece is highlighted
+const CLEAR_NAMES = ['', 'SINGLE', 'DOUBLE', 'TRIPLE', 'TETRIS'];
 
 // ---------------------------------------------------------------------------
 // Game. newGame() returns a self-contained state object plus the functions
@@ -233,7 +257,13 @@ function newGame(rng = Math.random) {
     lines: 0,
     level: 1,
     b2b: false,         // last clear was a tetris or T-spin (back-to-back)
+    combo: -1,          // consecutive clears; -1 when idle
     lastClear: null,    // { lines, tspin } of the most recent lock, for the HUD
+    clearing: null,     // { rows, acc } while full rows flash; no piece then
+    lockFlash: null,    // { cells: [[x,y]...], acc } just-locked highlight
+    toast: null,        // { text, id } scoring event for the HUD
+    toastId: 0,
+    clock: 0,           // ms since newGame, unpaused
     gravityAcc: 0,      // ms accumulated toward the next gravity step
     lockAcc: 0,         // ms the piece has been resting on something
     lockResets: 0,      // move-resets used for the current piece
@@ -283,6 +313,7 @@ function newGame(rng = Math.random) {
 
   function grounded() {
     const c = g.cur;
+    if (!c) return false;
     return !fits(g.board, c.name, c.rot, c.x, c.y + 1);
   }
 
@@ -305,6 +336,7 @@ function newGame(rng = Math.random) {
 
   function tryMove(dx, dy) {
     const c = g.cur;
+    if (!c) return false;
     if (!fits(g.board, c.name, c.rot, c.x + dx, c.y + dy)) return false;
     c.x += dx;
     c.y += dy;
@@ -322,7 +354,7 @@ function newGame(rng = Math.random) {
   // dir is +1 for clockwise, -1 for counter-clockwise. Try each kick offset
   // for the (from, to) pair; first fit wins.
   function rotate(dir) {
-    if (g.over || g.paused) return false;
+    if (g.over || g.paused || !g.cur) return false;
     const c = g.cur;
     const to = (c.rot + dir + 4) % 4;
     const kicks = kicksFor(c.name, c.rot, to);
@@ -342,7 +374,7 @@ function newGame(rng = Math.random) {
   }
 
   function holdPiece() {
-    if (g.over || g.paused || g.holdUsed) return false;
+    if (g.over || g.paused || g.holdUsed || !g.cur) return false;
     const parked = g.hold;
     g.hold = g.cur.name;
     g.holdUsed = true;
@@ -355,7 +387,7 @@ function newGame(rng = Math.random) {
   // arrived by rotation, the lock is a T-spin. Mini T-spins are not split out.
   function isTSpin() {
     const c = g.cur;
-    if (c.name !== 'T' || !g.lastWasRotate) return false;
+    if (!c || c.name !== 'T' || !g.lastWasRotate) return false;
     const cx = c.x + 1, cy = c.y + 1;
     let corners = 0;
     if (filledOrWall(g.board, cx - 1, cy - 1)) corners++;
@@ -369,45 +401,82 @@ function newGame(rng = Math.random) {
     g.score += points;
   }
 
-  function scoreLock(n, tspin) {
+  function toast(text) {
+    g.toast = { text, id: ++g.toastId };
+  }
+
+  // Score a lock that cleared n rows. Called before the rows collapse.
+  function scoreLock(n, tspin, perfect) {
     g.lastClear = { lines: n, tspin };
     let points = 0;
+    const parts = [];
     if (tspin) {
       points = TSPIN_SCORE[n] * g.level;
+      parts.push(n ? 'T-SPIN ' + CLEAR_NAMES[n] : 'T-SPIN');
     } else if (n > 0) {
       points = CLEAR_SCORE[n] * g.level;
+      parts.push(CLEAR_NAMES[n]);
     }
     // back-to-back: consecutive "difficult" clears (tetris or T-spin with lines)
     const difficult = n > 0 && (n === 4 || tspin);
     if (difficult) {
-      if (g.b2b) points = Math.floor(points * 1.5);
+      if (g.b2b) { points = Math.floor(points * 1.5); parts.unshift('B2B'); }
       g.b2b = true;
     } else if (n > 0) {
       g.b2b = false;
     }
+    // combo: every consecutive lock that clears something
+    if (n > 0) {
+      g.combo += 1;
+      if (g.combo > 0) {
+        points += COMBO_SCORE * g.combo * g.level;
+        parts.push('COMBO x' + g.combo);
+      }
+    } else {
+      g.combo = -1;
+    }
+    if (perfect) {
+      points += PERFECT_SCORE[n] * g.level;
+      parts.push('PERFECT CLEAR');
+    }
     addScore(points);
     g.lines += n;
     g.level = 1 + Math.floor(g.lines / LINES_PER_LEVEL);
+    if (parts.length) toast(parts.join(' ') + '  +' + points);
   }
 
   function lockPiece() {
     const c = g.cur;
     const tspin = isTSpin();
     stamp(g.board, c.name, c.rot, c.x, c.y);
-    // Lock-out: every cell of the piece ended up in the hidden buffer.
     const cells = PIECES[c.name].states[c.rot];
+    // Lock-out: every cell of the piece ended up in the hidden buffer.
     let visible = false;
     for (let i = 0; i < 4; i++) if (c.y + cells[i][1] >= BUFFER) visible = true;
     if (!visible) {
       g.over = true;
       return;
     }
-    scoreLock(clearLines(g.board), tspin);
+    g.lockFlash = { cells: cells.map(([dx, dy]) => [c.x + dx, c.y + dy]), acc: 0 };
+    const rows = fullRows(g.board);
+    scoreLock(rows.length, tspin, rows.length > 0 && emptyExcept(g.board, rows));
+    if (rows.length > 0) {
+      // Rows stay lit for CLEAR_FLASH ms; the collapse and next spawn wait.
+      g.clearing = { rows, acc: 0 };
+      g.cur = null;
+      return;
+    }
+    spawn();
+  }
+
+  function finishClear() {
+    collapse(g.board, g.clearing.rows);
+    g.clearing = null;
     spawn();
   }
 
   function hardDrop() {
-    if (g.over || g.paused) return;
+    if (g.over || g.paused || !g.cur) return;
     let rows = 0;
     while (tryMove(0, 1)) rows++;
     if (rows > 0) g.lastWasRotate = false;
@@ -438,6 +507,18 @@ function newGame(rng = Math.random) {
 
   function update(dt) {
     if (g.over || g.paused) return;
+    g.clock += dt;
+    if (g.lockFlash) {
+      g.lockFlash.acc += dt;
+      if (g.lockFlash.acc >= LOCK_FLASH) g.lockFlash = null;
+    }
+    if (g.clearing) {
+      // DAS keeps charging so a held direction carries into the next piece.
+      if (g.input.dasDir !== 0) g.input.dasAcc += dt;
+      g.clearing.acc += dt;
+      if (g.clearing.acc >= CLEAR_FLASH) finishClear();
+      return;
+    }
     updateInput(dt);
 
     const soft = g.input.down;
@@ -504,7 +585,7 @@ function newGame(rng = Math.random) {
   return {
     state: g,
     spawn, place, move, rotate, hardDrop, holdPiece, update, press, release,
-    ghostY, grounded, lockPiece, tryMove, isTSpin,
+    ghostY, grounded, lockPiece, finishClear, tryMove, isTSpin,
   };
 }
 
@@ -512,7 +593,8 @@ if (typeof module !== 'undefined') {
   module.exports = {
     COLS, ROWS, BUFFER, TOTAL, NEXT_COUNT, PIECES, KICKS_JLSTZ, KICKS_I,
     LOCK_DELAY, LOCK_RESETS, DAS, ARR,
-    makeBoard, fits, stamp, clearLines, makeBag, gravityMs, newGame,
+    makeBoard, fits, stamp, fullRows, collapse, clearLines, emptyExcept,
+    makeBag, gravityMs, newGame, CLEAR_FLASH, LOCK_FLASH,
   };
 }
 
@@ -533,6 +615,7 @@ function mount(doc) {
     overlay: doc.getElementById('overlay'),
     overlayTitle: doc.getElementById('overlay-title'),
     overlayHint: doc.getElementById('overlay-hint'),
+    toast: doc.getElementById('toast'),
   };
   const PREVIEW_CELL = 20;
   const PREVIEW_W = 4 * PREVIEW_CELL + 16;
@@ -604,7 +687,7 @@ function mount(doc) {
     }
   }
 
-  const shown = { score: -1, level: -1, lines: -1, overlay: null, queue: '', hold: '' };
+  const shown = { score: -1, level: -1, lines: -1, overlay: null, queue: '', hold: '', toast: 0 };
 
   // DOM writes only when a value changes; textContent every frame is wasteful.
   function renderHud() {
@@ -619,11 +702,20 @@ function mount(doc) {
       hud.overlay.classList.toggle('hidden', state === null);
       if (state === 'over') {
         hud.overlayTitle.textContent = 'Game over';
-        hud.overlayHint.textContent = 'press R to restart';
+        hud.overlayHint.textContent = g.score + ' points, ' + g.lines + ' lines. Press R to restart';
       } else if (state === 'paused') {
         hud.overlayTitle.textContent = 'Paused';
         hud.overlayHint.textContent = 'press P to resume';
       }
+    }
+
+    if (g.toast && shown.toast !== g.toast.id) {
+      shown.toast = g.toast.id;
+      hud.toast.textContent = g.toast.text;
+      // restart the CSS fade even if the text is identical
+      hud.toast.classList.remove('show');
+      void hud.toast.offsetWidth;
+      hud.toast.classList.add('show');
     }
 
     const q = g.queue.join('');
@@ -655,13 +747,33 @@ function mount(doc) {
       ctx.beginPath(); ctx.moveTo(0, y * CELL + .5); ctx.lineTo(COLS * CELL, y * CELL + .5); ctx.stroke();
     }
 
-    // settled blocks
+    // settled blocks; rows being cleared are drawn white and fade out
     const b = g.board;
+    const clearing = g.clearing;
     for (let y = BUFFER; y < TOTAL; y++) {
+      const lit = clearing && clearing.rows.includes(y);
       for (let x = 0; x < COLS; x++) {
         const id = b[y * COLS + x];
-        if (id) drawCell(ctx, x * CELL, (y - BUFFER) * CELL, COLOR_BY_ID[id], CELL);
+        if (!id) continue;
+        if (lit) {
+          const t = clearing.acc / CLEAR_FLASH;
+          drawCell(ctx, x * CELL, (y - BUFFER) * CELL, '#ffffff', CELL, 1 - t * 0.8);
+        } else {
+          drawCell(ctx, x * CELL, (y - BUFFER) * CELL, COLOR_BY_ID[id], CELL);
+        }
       }
+    }
+
+    // just-locked piece: brief white highlight so hard drops read
+    if (g.lockFlash) {
+      const a = 0.6 * (1 - g.lockFlash.acc / LOCK_FLASH);
+      for (const [x, y] of g.lockFlash.cells) {
+        if (y < BUFFER) continue;
+        ctx.globalAlpha = a;
+        ctx.fillStyle = '#fff';
+        ctx.fillRect(x * CELL, (y - BUFFER) * CELL, CELL, CELL);
+      }
+      ctx.globalAlpha = 1;
     }
 
     // ghost, then the active piece on top of it
