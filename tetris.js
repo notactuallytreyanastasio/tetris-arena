@@ -100,10 +100,21 @@ const KICKS_I = {
   '3>0': [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
   '0>3': [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
 };
+// 180-degree rotation. Guideline SRS has no 180 table; this is TETR.IO's
+// SRS+ table, six tests, the same for every piece (taken from agent-8, who
+// stores it y-up and negates at rotate time; here it is flipped to y-down at
+// the source like the tables above, so the file has one convention).
+const KICKS_180 = {
+  '0>2': [[0, 0], [0, -1], [1, -1], [-1, -1], [1, 0], [-1, 0]],
+  '2>0': [[0, 0], [0, 1], [-1, 1], [1, 1], [-1, 0], [1, 0]],
+  '1>3': [[0, 0], [1, 0], [1, -2], [1, -1], [0, -2], [0, -1]],
+  '3>1': [[0, 0], [-1, 0], [-1, -2], [-1, -1], [0, -2], [0, -1]],
+};
 const NO_KICK = [[0, 0]];
 
 function kicksFor(shape, from, to) {
   if (shape.name === 'O') return NO_KICK;
+  if ((to - from + 4) % 4 === 2) return KICKS_180[from + '>' + to];
   return (shape.name === 'I' ? KICKS_I : KICKS_JLSTZ)[from + '>' + to];
 }
 
@@ -380,7 +391,8 @@ function noteLockReset(g) {
   }
 }
 
-// Rotate by dir (+1 cw, -1 ccw) using the SRS kicks. Returns true on success.
+// Rotate by dir (+1 cw, -1 ccw, 2 for a 180) using the kick tables. Returns
+// true on success.
 function tryRotate(g, dir) {
   const p = g.piece;
   if (!p) return false;
@@ -391,7 +403,9 @@ function tryRotate(g, dir) {
     if (fits(g.board, p.shape, p.x + kx, p.y + ky, to)) {
       p.x += kx; p.y += ky; p.o = to;
       p.spun = true;
-      p.kick = i;
+      // The fifth-kick T-spin upgrade is defined for the 90-degree tables;
+      // a 180 leaves it to the corner rule alone.
+      p.kick = dir === 2 ? 0 : i;
       noteLockReset(g);
       if (p.y > p.lowestY) { p.lowestY = p.y; g.lockResets = 0; }
       return true;
@@ -427,6 +441,7 @@ function press(g, key) {
     case 'down': g.softDrop = true; break;
     case 'cw': tryRotate(g, 1); break;
     case 'ccw': tryRotate(g, -1); break;
+    case 'r180': tryRotate(g, 2); break;
     case 'hard': hardDrop(g); break;
     case 'hold': holdPiece(g); break;
   }
@@ -500,7 +515,7 @@ if (typeof module !== 'undefined') {
   module.exports = {
     COLS, ROWS, HIDDEN_ROWS, VISIBLE_ROWS, DAS, ARR, LOCK_DELAY, LOCK_RESETS,
     CLEAR_FLASH, CLEAR_SCORE, LINES_PER_LEVEL,
-    SHAPES, COLORS, KICKS_JLSTZ, KICKS_I, gravityMs, makeBag, cellAt, fits,
+    SHAPES, COLORS, KICKS_JLSTZ, KICKS_I, KICKS_180, gravityMs, makeBag, cellAt, fits,
     clearFullRows, fullRows,
     NEXT_COUNT, TSPIN_SCORE, TSPIN_MINI_SCORE, COMBO_SCORE, PERFECT_CLEAR_SCORE,
     newGame, spawn, lock, finishClear, tryMove, tryRotate, hardDrop, holdPiece, ghostY, tspinKind,
@@ -664,7 +679,7 @@ function mount(doc, win) {
   // Keyboard. keydown auto-repeat from the OS is ignored; DAS is ours.
   const KEYMAP = {
     ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down',
-    ArrowUp: 'cw', KeyX: 'cw', KeyZ: 'ccw', Space: 'hard',
+    ArrowUp: 'cw', KeyX: 'cw', KeyZ: 'ccw', KeyA: 'r180', Space: 'hard',
     KeyC: 'hold', ShiftLeft: 'hold', ShiftRight: 'hold',
     KeyP: 'pause', Escape: 'pause',
   };

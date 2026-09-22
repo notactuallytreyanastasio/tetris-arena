@@ -178,6 +178,22 @@ test('combo: the second consecutive clearing lock adds 50', () => {
   dropRight(g, 'I'); assert.strictEqual(g.combo, 1); assert.strictEqual(g.lastEvent.label, 'Single x2'); assert.strictEqual(g.lastEvent.points, 150);
 });
 
+test('180: a T pointing up on the floor flips to pointing down via the second kick, up one row', () => {
+  const g = T.newGame(rng(2)); placeAt(g, 'T', 3, 0); while (T.tryMove(g, 0, 1)) {}
+  const y0 = g.piece.y;
+  assert.ok(T.tryRotate(g, 2)); assert.strictEqual(g.piece.o, 2); assert.strictEqual(g.piece.y, y0 - 1);
+  assert.strictEqual(g.piece.kick, 0, 'no fifth-kick upgrade after a 180');
+  assert.strictEqual(g.piece.y + 2, bot, 'stem on the floor');
+});
+test('180 from every orientation of every piece stays in bounds and lands two states away', () => {
+  for (const s of T.SHAPES) for (let o = 0; o < 4; o++) {
+    const g = T.newGame(rng(3)); placeAt(g, s.name, 3, o);
+    assert.ok(T.tryRotate(g, 2), s.name + ' o' + o);
+    assert.strictEqual(g.piece.o, (o + 2) % 4);
+    for (const [cx, cy] of g.piece.shape.cells[g.piece.o]) assert.ok(g.piece.x + cx >= 0 && g.piece.x + cx < T.COLS && g.piece.y + cy >= 0);
+  }
+});
+
 // ---- M5
 test('pause freezes gravity and input; unpause resumes', () => {
   const g = T.newGame(rng(8)); placeAt(g, 'T'); const y0 = g.piece.y;

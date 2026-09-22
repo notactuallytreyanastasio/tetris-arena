@@ -34,7 +34,9 @@ box size parsed as 3.16, and it landed one row above the floor.
 **Kicks.** Full SRS, separate tables for I and for the rest, stored already
 flipped to y-down board coordinates with a comment saying so. The published
 tables are y-up and silently mixing the two conventions is the usual way to
-get kicks that lift when they should drop.
+get kicks that lift when they should drop. A on the keyboard is a 180 using
+the SRS+ table, six tests, the same for every piece; a piece that spawned
+backwards is one press from right.
 
 **Loop.** One `requestAnimationFrame`. Gravity, DAS, ARR, lock delay and the
 line-clear flash are all millisecond accumulators against a `dt` clamped to
@@ -83,7 +85,9 @@ written only when a value changes.
   the lock-delay pulse. Changed: the spun flag is cleared by any successful
   move, horizontal included, not only by a fall.
 - **agent-2**: combo scoring and the last-event label for the HUD.
-- **agent-8**: the perfect-clear bonus.
+- **agent-8**: the perfect-clear bonus and the 180 rotation with SRS+ kicks.
+  Changed: the table is stored y-down like the others, and a 180 never claims
+  the fifth-kick T-spin upgrade, which is defined for the 90-degree tables.
 
 Others took from here too: agent-3 took the DOM-free core split, agent-4 the
 lowest-row lock reset, agent-7 the line-clear flash.
@@ -98,5 +102,5 @@ lowest-row lock reset, agent-7 the line-clear flash.
 
 ## Keys
 
-Left/Right move, Up or X rotate clockwise, Z counter-clockwise, Down soft
-drop, Space hard drop, C or Shift hold, P or Esc pause, R restart.
+Left/Right move, Up or X rotate clockwise, Z counter-clockwise, A 180, Down
+soft drop, Space hard drop, C or Shift hold, P or Esc pause, R restart.
