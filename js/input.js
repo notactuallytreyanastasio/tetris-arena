@@ -10,6 +10,7 @@ const KEYS = {
   KeyZ:       g => g.rotate(-1),
   ControlLeft: g => g.rotate(-1),
   Space:      g => g.hardDrop(),
+  KeyR:       g => g.reset(),
 };
 
 function attachInput(game) {

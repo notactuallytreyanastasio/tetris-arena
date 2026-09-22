@@ -8,10 +8,15 @@
 
   attachInput(game);
 
+  // DOM writes only when a value changes (taken from agent-3): textContent
+  // every frame forces layout work for nothing.
+  const shown = { score: -1, lines: -1, level: -1, status: null };
   function syncHud() {
-    $('score').textContent = game.score;
-    $('lines').textContent = game.lines;
-    $('level').textContent = game.level;
+    if (shown.score !== game.score) $('score').textContent = shown.score = game.score;
+    if (shown.lines !== game.lines) $('lines').textContent = shown.lines = game.lines;
+    if (shown.level !== game.level) $('level').textContent = shown.level = game.level;
+    if (shown.status === game.status) return;
+    shown.status = game.status;
     if (game.status === 'over') {
       $('overlay-title').textContent = 'GAME OVER';
       $('overlay-hint').textContent = 'press R to restart';

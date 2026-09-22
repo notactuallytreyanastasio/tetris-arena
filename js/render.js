@@ -62,10 +62,12 @@ function makeRenderer(boardCanvas) {
     ctx.fillRect(0, 0, W, H);
     drawGridLines();
 
+    const flashing = game.clearing ? game.clearing.rows : [];
     for (let r = HIDDEN; r < ROWS; r++) {
+      const flash = flashing.includes(r);
       for (let c = 0; c < COLS; c++) {
         const v = game.grid[r][c];
-        if (v) cell(c, r - HIDDEN, COLORS[v]);
+        if (v) cell(c, r - HIDDEN, flash ? '#ffffff' : COLORS[v]);
       }
     }
 

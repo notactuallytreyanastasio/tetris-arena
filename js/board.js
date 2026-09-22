@@ -1,10 +1,16 @@
 // The board is an array of rows; grid[row][col] is 0 for empty or a piece id.
 // Rows 0..HIDDEN-1 are above the visible playfield: pieces spawn there and a
 // piece that cannot spawn without overlap means the game is over.
+//
+// HIDDEN is 4, not 2: SRS kicks can lift a piece two rows, and a piece spawns
+// with its lowest cell in the last hidden row, so 2 rows of headroom above
+// every spawn state keeps every kick inside the array. Above row 0 is solid,
+// like the walls, so no cell can ever be lost when a piece locks.
+// (2 -> 4 and the solid ceiling taken from agent-3, agent-9 and agent-6.)
 
 const COLS = 10;
 const VISIBLE_ROWS = 20;
-const HIDDEN = 2;
+const HIDDEN = 4;
 const ROWS = VISIBLE_ROWS + HIDDEN;
 
 function emptyRow() { return new Array(COLS).fill(0); }
@@ -16,15 +22,14 @@ function createGrid() {
 }
 
 // True if `shape` placed with its top-left at (x, y) overlaps a wall, the
-// floor, or a settled cell. Cells above row 0 are allowed (needed for kicks
-// that push a piece upward out of the buffer).
+// floor, the ceiling above row 0, or a settled cell.
 function collides(grid, shape, x, y) {
   for (let r = 0; r < shape.length; r++) {
     for (let c = 0; c < shape[r].length; c++) {
       if (!shape[r][c]) continue;
       const gx = x + c, gy = y + r;
-      if (gx < 0 || gx >= COLS || gy >= ROWS) return true;
-      if (gy >= 0 && grid[gy][gx]) return true;
+      if (gx < 0 || gx >= COLS || gy < 0 || gy >= ROWS) return true;
+      if (grid[gy][gx]) return true;
     }
   }
   return false;
@@ -33,9 +38,18 @@ function collides(grid, shape, x, y) {
 function merge(grid, shape, x, y, id) {
   for (let r = 0; r < shape.length; r++) {
     for (let c = 0; c < shape[r].length; c++) {
-      if (shape[r][c] && y + r >= 0) grid[y + r][x + c] = id;
+      if (shape[r][c]) grid[y + r][x + c] = id;
     }
   }
+}
+
+// True if every filled cell of the shape is in the hidden rows: a piece that
+// settles there is a lock-out and ends the game. (Rule taken from agent-1.)
+function entirelyHidden(shape, y) {
+  for (let r = 0; r < shape.length; r++) {
+    if (shape[r].some(Boolean) && y + r >= HIDDEN) return false;
+  }
+  return true;
 }
 
 function fullRows(grid) {
