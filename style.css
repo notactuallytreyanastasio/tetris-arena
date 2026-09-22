@@ -77,6 +77,9 @@ canvas {
 .stats div:last-child { border-bottom: 0; }
 .label { color: var(--muted); }
 
+.event-wrap { min-height: 42px; display: flex; align-items: center; }
+.event { color: var(--text); font-size: 12px; letter-spacing: .04em; }
+
 .keys dl {
   margin: 0;
   display: grid;

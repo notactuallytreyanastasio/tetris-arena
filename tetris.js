@@ -91,11 +91,24 @@ const LOCK_RESETS = 15;   // shifts/rotations that may restart that timer per pi
 const DAS = 150;          // ms a direction is held before it auto-repeats
 const ARR = 33;           // ms between auto-repeat shifts
 const SOFT_DROP = 20;     // soft drop runs gravity this many times faster
+const CLEAR_FLASH = 120;  // ms full rows stay on screen, white, before collapsing
+const LINES_PER_LEVEL = 10;
+
+// Guideline scoring, all multiplied by level at award time.
+const SCORE = {
+  clear:   [0, 100, 300, 500, 800],        // by lines
+  tspin:   [400, 800, 1200, 1600],         // T-spin by lines (0..3)
+  mini:    [100, 200, 400],                // mini T-spin by lines (0..2)
+  perfect: [0, 800, 1200, 1800, 2000],     // perfect clear by lines
+  perfectB2B: 3200,                        // back-to-back tetris perfect clear
+  combo: 50,                               // x combo count
+  soft: 1, hard: 2,                        // per row dropped
+};
+const T_ID = NAMES.indexOf('T') + 1;
 
 // ---------------------------------------------------------------- 2. board
 
 const board = new Uint8Array(W * H);
-const at = (x, y) => board[y * W + x];
 
 // True if any cell of piece `id` in orientation `r` at (px, py) is out of
 // bounds or on a filled cell. y < 0 is out of bounds too; the hidden rows
@@ -109,10 +122,36 @@ function collides(id, r, px, py) {
   return false;
 }
 
+// y indices of completely filled rows, ascending.
+function fullRows() {
+  const rows = [];
+  for (let y = 0; y < H; y++) {
+    let full = true;
+    for (let x = 0; x < W; x++) if (!board[y * W + x]) { full = false; break; }
+    if (full) rows.push(y);
+  }
+  return rows;
+}
+
+// Remove rows (ascending). copyWithin slides everything above row y down by
+// one and the top row is blanked; rows below y keep their index, so
+// ascending order stays valid as we go. No allocation.
+function removeRows(rows) {
+  for (const y of rows) {
+    board.copyWithin(W, 0, y * W);
+    board.fill(0, 0, W);
+  }
+}
+
+function boardEmpty() {
+  for (let i = 0; i < board.length; i++) if (board[i]) return false;
+  return true;
+}
+
 // ---------------------------------------------------------------- 3. pieces
 
 // 7-bag randomizer: every piece once per bag, so droughts are bounded.
-const bag = [];
+let bag = [];
 function nextId() {
   if (bag.length === 0) {
     for (let i = 1; i <= 7; i++) bag.push(i);
@@ -125,12 +164,18 @@ function nextId() {
 }
 
 const state = {
-  cur: null,       // { id, r, x, y }
+  cur: null,        // { id, r, x, y, lowestY, spun, kick }
+  score: 0,
+  lines: 0,
   level: 1,
+  combo: -1,        // consecutive clearing locks; -1 = none in progress
+  b2b: false,       // last clear was a tetris or T-spin
   over: false,
-  gravityAcc: 0,   // ms accumulated toward the next gravity step
-  lockAcc: 0,      // ms the piece has been resting
-  lockResets: 0,   // lock-delay restarts used by the current piece
+  clearing: null,   // { rows, acc } while full rows flash; no piece exists then
+  event: '',        // HUD line naming the last clear
+  gravityAcc: 0,    // ms accumulated toward the next gravity step
+  lockAcc: 0,       // ms the piece has been resting
+  lockResets: 0,    // lock-delay restarts used at the current lowest row
 };
 
 // Held horizontal directions, oldest first. The newest press wins; releasing
@@ -138,12 +183,22 @@ const state = {
 // "release resumes the other direction"; the stack replaces their
 // left/right/dasDir triple.)
 const input = {
-  held: [],        // e.g. [-1, 1] means left was pressed, then right
-  dasAcc: 0,       // ms toward the next auto-shift
-  charged: false,  // DAS has elapsed; now repeating every ARR
-  soft: false,     // down is held
+  held: [],         // e.g. [-1, 1] means left was pressed, then right
+  dasAcc: 0,        // ms toward the next auto-shift
+  charged: false,   // DAS has elapsed; now repeating every ARR
+  soft: false,      // down is held
 };
 const activeDir = () => input.held.length ? input.held[input.held.length - 1] : 0;
+
+function reset() {
+  board.fill(0);
+  bag = [];
+  Object.assign(state, {
+    cur: null, score: 0, lines: 0, level: 1, combo: -1, b2b: false,
+    over: false, clearing: null, event: '', gravityAcc: 0, lockAcc: 0, lockResets: 0,
+  });
+  spawn();
+}
 
 function spawn() {
   const id = nextId();
@@ -153,21 +208,22 @@ function spawn() {
   // row higher (agent-3's fallback) before topping out.
   for (const y of [HIDDEN - 1, HIDDEN - 2]) {
     if (!collides(id, 0, x, y)) {
-      state.cur = { id, r: 0, x, y };
+      state.cur = { id, r: 0, x, y, lowestY: y, spun: false, kick: -1 };
       state.gravityAcc = 0;
       state.lockAcc = 0;
       state.lockResets = 0;
       return;
     }
   }
-  state.cur = { id, r: 0, x, y: HIDDEN - 2 };
-  state.over = true;
+  state.cur = { id, r: 0, x, y: HIDDEN - 2, lowestY: 0, spun: false, kick: -1 };
+  state.over = true;   // block out
 }
 
 const grounded = () => { const p = state.cur; return collides(p.id, p.r, p.x, p.y + 1); };
 
 // A shift or rotation while resting restarts the lock timer, LOCK_RESETS
-// times at most, so a piece cannot be stalled forever.
+// times at most, so a piece cannot be stalled forever. The budget refills
+// when the piece reaches a new lowest row (Guideline move reset, via agent-2).
 function noteMoved() {
   if (grounded() && state.lockResets < LOCK_RESETS) {
     state.lockAcc = 0;
@@ -175,31 +231,43 @@ function noteMoved() {
   }
 }
 
-// Try to shift the current piece. Returns true if it moved.
+// Try to shift the current piece. Returns true if it moved. Any successful
+// shift means the last action was not a rotation, which matters for T-spins.
 function shift(dx, dy) {
   const p = state.cur;
   if (collides(p.id, p.r, p.x + dx, p.y + dy)) return false;
   p.x += dx;
   p.y += dy;
+  p.spun = false;
+  if (p.y > p.lowestY) {
+    p.lowestY = p.y;
+    state.lockResets = 0;
+  }
   return true;
 }
 
 function move(dx) {
-  if (state.over) return;
+  if (state.over || !state.cur) return;
   if (shift(dx, 0)) noteMoved();
 }
 
 // dir: 0 clockwise, 1 counter-clockwise. Walk the SRS kick list for this
-// (from, dir) pair; the first offset that fits wins.
+// (from, dir) pair; the first offset that fits wins. Records which kick was
+// used because the fifth one upgrades a mini T-spin to a full one.
 function rotate(dir) {
-  if (state.over) return false;
+  if (state.over || !state.cur) return false;
   const p = state.cur;
   const to = (p.r + (dir === 0 ? 1 : 3)) % 4;
-  for (const [kx, ky] of kicksFor(p.id)[p.r][dir]) {
+  const kicks = kicksFor(p.id)[p.r][dir];
+  for (let i = 0; i < kicks.length; i++) {
+    const [kx, ky] = kicks[i];
     if (!collides(p.id, to, p.x + kx, p.y + ky)) {
       p.r = to;
       p.x += kx;
       p.y += ky;
+      p.spun = true;
+      p.kick = i;
+      if (p.y > p.lowestY) { p.lowestY = p.y; state.lockResets = 0; }
       noteMoved();
       return true;
     }
@@ -208,23 +276,84 @@ function rotate(dir) {
 }
 
 function hardDrop() {
-  if (state.over) return;
-  while (shift(0, 1)) { /* fall */ }
+  if (state.over || !state.cur) return;
+  let rows = 0;
+  while (shift(0, 1)) rows++;
+  state.score += rows * SCORE.hard;
   lock();
+}
+
+// 3-corner rule (from agent-5): a T whose last action was a rotation, with at
+// least three of the four diagonals around its centre solid, was spun in.
+// It is a full T-spin if both corners on the side it points to are solid, or
+// if it arrived by the fifth kick; otherwise a mini. Returns null/'mini'/'full'.
+function tspinKind(p) {
+  if (p.id !== T_ID || !p.spun) return null;
+  const solid = (x, y) => x < 0 || x >= W || y < 0 || y >= H || board[y * W + x] !== 0;
+  const cx = p.x + 1, cy = p.y + 1;             // T's centre is the middle of its 3x3 box
+  const tl = solid(cx - 1, cy - 1), tr = solid(cx + 1, cy - 1);
+  const bl = solid(cx - 1, cy + 1), br = solid(cx + 1, cy + 1);
+  if (tl + tr + bl + br < 3) return null;
+  const front = [[tl, tr], [tr, br], [bl, br], [tl, bl]][p.r];   // corners the T points at
+  return (front[0] && front[1]) || p.kick === 4 ? 'full' : 'mini';
+}
+
+// Points for a lock that cleared n lines with the given spin kind.
+function award(n, spin, perfect) {
+  let pts, label;
+  if (spin === 'full')      { pts = SCORE.tspin[n]; label = 'T-Spin'; }
+  else if (spin === 'mini') { pts = SCORE.mini[Math.min(n, 2)]; label = 'Mini T-Spin'; }
+  else                      { pts = SCORE.clear[n]; label = ''; }
+  if (n > 0) label = (label ? label + ' ' : '') + ['', 'Single', 'Double', 'Triple', 'Tetris'][n];
+
+  const hard = n === 4 || spin !== null;        // clears that keep the B2B chain alive
+  if (n > 0) {
+    if (hard && state.b2b) { pts = Math.floor(pts * 1.5); label = 'B2B ' + label; }
+    if (perfect) {
+      pts += (hard && state.b2b && n === 4) ? SCORE.perfectB2B : SCORE.perfect[n];
+      label = 'Perfect Clear ' + label;
+    }
+    state.b2b = hard;
+    state.combo++;
+    if (state.combo > 0) { pts += SCORE.combo * state.combo; label += '  x' + (state.combo + 1); }
+    state.lines += n;
+    state.level = 1 + Math.floor(state.lines / LINES_PER_LEVEL);
+  } else {
+    state.combo = -1;
+  }
+  state.score += pts * state.level;
+  if (label) state.event = label;
 }
 
 function lock() {
   const p = state.cur;
+  const spin = tspinKind(p);              // before stamping: the T's own cells are not corners
   let allHidden = true;
   for (const [cx, cy] of PIECES[p.id].rot[p.r]) {
     const y = p.y + cy;
     board[y * W + p.x + cx] = p.id;
     if (y >= HIDDEN) allHidden = false;
   }
-  if (allHidden) {          // locked entirely above the visible area: lock out
-    state.over = true;
+  state.cur = null;
+  if (allHidden) { state.over = true; return; }   // lock out
+
+  const rows = fullRows();
+  if (rows.length === 0) {
+    award(0, spin, false);
+    spawn();
     return;
   }
+  // Decide perfect clear now: after removal the board is empty iff every
+  // filled cell was on a full row.
+  let filled = 0;
+  for (let i = 0; i < board.length; i++) if (board[i]) filled++;
+  award(rows.length, spin, filled === rows.length * W);
+  state.clearing = { rows, acc: 0 };      // rows flash, then finishClear() collapses them
+}
+
+function finishClear() {
+  removeRows(state.clearing.rows);
+  state.clearing = null;
   spawn();
 }
 
@@ -235,7 +364,7 @@ function frame(now) {
   // Clamp dt so a backgrounded tab does not dump seconds of gravity at once.
   const dt = Math.min(now - last, 100);
   last = now;
-  if (!state.over) update(dt);
+  update(dt);
   render();
   requestAnimationFrame(frame);
 }
@@ -255,10 +384,17 @@ function updateInput(dt) {
 }
 
 function update(dt) {
-  updateInput(dt);
   if (state.over) return;
 
-  const p = state.cur;
+  if (state.clearing) {
+    state.clearing.acc += dt;
+    if (state.clearing.acc >= CLEAR_FLASH) finishClear();
+    return;
+  }
+
+  updateInput(dt);
+  if (state.over || !state.cur) return;
+
   let step = gravitySeconds(state.level) * 1000;
   if (input.soft) step /= SOFT_DROP;
 
@@ -273,6 +409,7 @@ function update(dt) {
   state.gravityAcc += dt;
   while (state.gravityAcc >= step && shift(0, 1)) {
     state.gravityAcc -= step;
+    if (input.soft) state.score += SCORE.soft;
   }
 }
 
@@ -305,6 +442,8 @@ function onKeyDown(e) {
     case 'ArrowUp': case 'KeyX': rotate(0); break;
     case 'KeyZ': case 'ControlLeft': rotate(1); break;
     case 'Space': hardDrop(); break;
+    case 'KeyR': reset(); break;
+    case 'Enter': if (state.over) reset(); break;
     default: return;
   }
   e.preventDefault();
@@ -334,6 +473,15 @@ window.addEventListener('blur', releaseAll);
 
 const canvas = document.getElementById('board');
 const ctx = canvas.getContext('2d');
+const hud = {
+  score: document.getElementById('score'),
+  level: document.getElementById('level'),
+  lines: document.getElementById('lines'),
+  event: document.getElementById('event'),
+  overlay: document.getElementById('overlay'),
+  overlayTitle: document.getElementById('overlay-title'),
+  overlayText: document.getElementById('overlay-text'),
+};
 
 // Backing store scaled by devicePixelRatio so cell edges are crisp.
 function fitCanvas(c, cssW, cssH) {
@@ -359,7 +507,7 @@ function drawCell(c, x, y, color, size = CELL) {
   c.fillRect(px + size - 2, py, 2, size);
 }
 
-function render() {
+function renderBoard() {
   ctx.fillStyle = '#0a0c11';
   ctx.fillRect(0, 0, W * CELL, VIS * CELL);
 
@@ -371,22 +519,49 @@ function render() {
   for (let y = 1; y < VIS; y++) { ctx.moveTo(0, y * CELL + .5); ctx.lineTo(W * CELL, y * CELL + .5); }
   ctx.stroke();
 
-  // settled cells
+  // settled cells; rows mid-clear are white so the clear reads as an event
+  const flashing = state.clearing ? new Set(state.clearing.rows) : null;
   for (let y = HIDDEN; y < H; y++) {
+    const white = flashing && flashing.has(y);
     for (let x = 0; x < W; x++) {
       const id = board[y * W + x];
-      if (id) drawCell(ctx, x, y - HIDDEN, COLORS[id]);
+      if (id) drawCell(ctx, x, y - HIDDEN, white ? '#ffffff' : COLORS[id]);
     }
   }
 
   // falling piece
   const p = state.cur;
-  if (p) {
+  if (p && !state.over) {
     for (const [cx, cy] of PIECES[p.id].rot[p.r]) {
       const y = p.y + cy - HIDDEN;
       if (y >= 0) drawCell(ctx, p.x + cx, y, COLORS[p.id]);
     }
   }
+}
+
+// DOM writes only when a value changes (from agent-3); textContent every
+// frame is wasted layout work.
+const shown = { score: -1, level: -1, lines: -1, event: null, overlay: null };
+function renderHud() {
+  if (shown.score !== state.score) hud.score.textContent = shown.score = state.score;
+  if (shown.level !== state.level) hud.level.textContent = shown.level = state.level;
+  if (shown.lines !== state.lines) hud.lines.textContent = shown.lines = state.lines;
+  if (shown.event !== state.event) hud.event.textContent = shown.event = state.event;
+
+  const overlay = state.over ? 'over' : null;
+  if (shown.overlay !== overlay) {
+    shown.overlay = overlay;
+    hud.overlay.classList.toggle('hidden', overlay === null);
+    if (overlay === 'over') {
+      hud.overlayTitle.textContent = 'Game over';
+      hud.overlayText.textContent = 'Press R to restart';
+    }
+  }
+}
+
+function render() {
+  renderBoard();
+  renderHud();
 }
 
 // ---------------------------------------------------------------- go
@@ -395,6 +570,9 @@ spawn();
 requestAnimationFrame(frame);
 
 // Debug handle: lets a test harness (or a curious reader) drive the loop.
-window.__tetris = { state, input, board, PIECES, KICKS, collides, frame, move, rotate, hardDrop, onKeyDown, onKeyUp, W, H, HIDDEN };
+window.__tetris = {
+  state, input, board, PIECES, KICKS, SCORE, collides, frame, move, rotate, hardDrop,
+  lock, reset, tspinKind, fullRows, onKeyDown, onKeyUp, W, H, HIDDEN,
+};
 
 })();
