@@ -14,6 +14,11 @@
     </aside>
     <section class="field">
       <canvas id="board"></canvas>
+      <div id="toast" class="toast"></div>
+      <div id="overlay" class="overlay hidden">
+        <h1 id="overlay-title">Game over</h1>
+        <p id="overlay-hint">press R to restart</p>
+      </div>
     </section>
     <aside class="panel right">
       <h2>Next</h2>
@@ -23,6 +28,14 @@
         <dt>Level</dt><dd id="level">1</dd>
         <dt>Lines</dt><dd id="lines">0</dd>
       </dl>
+      <ul class="keys">
+        <li><kbd>&larr;</kbd><kbd>&rarr;</kbd> move</li>
+        <li><kbd>&uarr;</kbd><kbd>X</kbd> / <kbd>Z</kbd> rotate</li>
+        <li><kbd>&darr;</kbd> soft drop</li>
+        <li><kbd>space</kbd> hard drop</li>
+        <li><kbd>C</kbd> hold &nbsp; <kbd>P</kbd> pause</li>
+        <li><kbd>R</kbd> restart</li>
+      </ul>
     </aside>
   </main>
   <script src="src/pieces.js"></script>

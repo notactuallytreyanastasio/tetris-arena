@@ -4,9 +4,16 @@
 (function () {
   'use strict';
 
+  const $ = id => document.getElementById(id);
   const game = new window.GameModule.Game();
-  const renderer = new window.Renderer(document.getElementById('board'));
-  const input = new window.Input.Input(game, {});
+  const renderer = new window.Renderer({
+    board: $('board'), score: $('score'), level: $('level'), lines: $('lines'),
+    toast: $('toast'), overlay: $('overlay'),
+    overlayTitle: $('overlay-title'), overlayHint: $('overlay-hint'),
+  });
+  const input = new window.Input.Input(game, {
+    restart() { game.reset(); },
+  });
   input.attach(window);
 
   let last = performance.now();
@@ -15,7 +22,7 @@
     last = now;
     input.update(dt);
     game.update(dt);
-    renderer.drawBoard(game);
+    renderer.draw(game, false);
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);

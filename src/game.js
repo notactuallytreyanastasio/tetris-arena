@@ -6,12 +6,27 @@
 
   const P = root.Pieces || require('./pieces.js').Pieces;
   const B = root.BoardModule || require('./board.js').BoardModule;
-  const { COLS, HIDDEN } = B;
+  const { COLS, HIDDEN, TOTAL } = B;
 
   const LOCK_DELAY_MS = 500;
   const LOCK_RESET_CAP = 15;   // guideline "move reset" limit per piece
   const CLEAR_ANIM_MS = 220;
   const SOFT_DROP_FACTOR = 20; // soft drop = 20x gravity
+  const LINES_PER_LEVEL = 10;
+  const TOAST_MS = 1400;
+
+  // Guideline scoring, all multiplied by level.
+  const SCORE = {
+    clear:   [0, 100, 300, 500, 800],
+    tspin:   [400, 800, 1200, 1600],
+    mini:    [100, 200, 400],
+    perfect: [0, 800, 1200, 1800, 2000],
+    combo: 50,
+    softDrop: 1,
+    hardDrop: 2,
+    b2b: 1.5,
+  };
+  const CLEAR_NAMES = ['', 'SINGLE', 'DOUBLE', 'TRIPLE', 'TETRIS'];
 
   // Guideline gravity curve: seconds per row at a given level.
   // Measured: level 1 = 1000ms, 5 = 355ms, 10 = 64ms, 15 = 7ms, 20 = 0.5ms.
@@ -33,13 +48,20 @@
     reset() {
       this.board.reset();
       this.piece = null;        // { type, rot, x, y }
+      this.score = 0;
+      this.lines = 0;
       this.level = 1;
+      this.combo = -1;          // consecutive line-clearing locks; -1 = none
+      this.b2b = false;         // last clear was a tetris or T-spin
+      this.toast = null;        // { text, t } naming the last clear
       this.gravityAcc = 0;
       this.lockTimer = 0;
       this.lockResets = 0;
       this.lowestY = 0;
       this.grounded = false;
       this.softDropping = false;
+      this.spun = false;        // last successful action was a rotation
+      this.kickIndex = 0;       // which kick test placed it (4 = the 5th)
       this.clearing = null;     // { rows, t } while the clear animation runs
       this.over = false;
       this.spawn();
@@ -64,18 +86,18 @@
         x: Math.floor((COLS - def.size) / 2),
         y: HIDDEN - 1 - maxDy,
       };
+      this.piece = piece;
       if (!this.board.fits(def.states[0], piece.x, piece.y)) {
-        this.piece = piece;
         this.over = true;
         return;
       }
-      this.piece = piece;
       if (this.board.fits(def.states[0], piece.x, piece.y + 1)) piece.y++;
       this.gravityAcc = 0;
       this.lockTimer = 0;
       this.lockResets = 0;
       this.lowestY = piece.y;
       this.grounded = false;
+      this.spun = false;
     }
 
     gravityMs() {
@@ -104,11 +126,16 @@
 
     // ---- player actions -----------------------------------------------
 
+    active() {
+      return this.piece && !this.over && !this.clearing;
+    }
+
     move(dx) {
-      if (!this.piece || this.over || this.clearing) return false;
+      if (!this.active()) return false;
       const p = this.piece;
       if (!this.board.fits(this.shape(), p.x + dx, p.y)) return false;
       p.x += dx;
+      this.spun = false;
       this.touched();
       return true;
     }
@@ -116,7 +143,7 @@
     // dir = +1 clockwise, -1 counter-clockwise. Walks the SRS kick list for
     // this (from, to) pair and takes the first offset that fits.
     rotate(dir) {
-      if (!this.piece || this.over || this.clearing) return false;
+      if (!this.active()) return false;
       const p = this.piece;
       const from = p.rot;
       const to = (from + dir + 4) % 4;
@@ -129,6 +156,8 @@
           p.x = nx;
           p.y = ny;
           p.rot = to;
+          this.spun = true;
+          this.kickIndex = i;
           this.touched();
           return true;
         }
@@ -142,9 +171,11 @@
 
     // Drop to the ghost position and lock immediately. Returns rows dropped.
     hardDrop() {
-      if (!this.piece || this.over || this.clearing) return 0;
+      if (!this.active()) return 0;
       const rows = this.ghostY() - this.piece.y;
       this.piece.y += rows;
+      if (rows > 0) this.spun = false;
+      this.score += rows * SCORE.hardDrop;
       this.lockPiece();   // replaces this.piece with the next spawn
       return rows;
     }
@@ -164,28 +195,104 @@
       const p = this.piece;
       if (this.board.fits(this.shape(), p.x, p.y + 1)) {
         p.y++;
+        this.spun = false;
+        if (p.y > this.lowestY) { this.lowestY = p.y; this.lockResets = 0; }
         return true;
       }
       return false;
     }
 
-    // ---- locking and clearing -----------------------------------------
+    // ---- T-spins --------------------------------------------------------
+
+    // Three-corner rule (taken from agent-5): a T whose last successful
+    // action was a rotation and has at least three of the four diagonals
+    // around its centre solid was spun in. It is a full T-spin if both
+    // corners on the side the T points to are solid, or it arrived via the
+    // fifth kick test; otherwise a mini. Returns null, 'mini' or 'full'.
+    // Walls, floor and the ceiling all count as solid, matching fits().
+    tspinKind() {
+      const p = this.piece;
+      if (p.type !== 'T' || !this.spun) return null;
+      const solid = (x, y) =>
+        x < 0 || x >= COLS || y < 0 || y >= TOTAL || this.board.get(x, y) !== 0;
+      const cx = p.x + 1, cy = p.y + 1;
+      const tl = solid(cx - 1, cy - 1), tr = solid(cx + 1, cy - 1);
+      const bl = solid(cx - 1, cy + 1), br = solid(cx + 1, cy + 1);
+      if (tl + tr + bl + br < 3) return null;
+      const front = [[tl, tr], [tr, br], [bl, br], [tl, bl]][p.rot];
+      return (front[0] && front[1]) || this.kickIndex === 4 ? 'full' : 'mini';
+    }
+
+    // ---- locking, scoring, clearing -----------------------------------
 
     lockPiece() {
       const p = this.piece;
+      const tspin = this.tspinKind();
       this.board.lock(this.shape(), p.x, p.y, P.PIECES[p.type].id);
-      if (this.board.anyHiddenOccupied()) {
+      if (this.board.anyHiddenOccupied() && !this.anyVisible()) {
         // Lock out: the piece settled entirely above the visible field.
         this.over = true;
         return;
       }
       const rows = this.board.fullRows();
+      this.award(rows.length, tspin, rows.length > 0 && this.isPerfectClear(rows));
       if (rows.length) {
         this.clearing = { rows, t: 0 };
         this.piece = null;
       } else {
         this.spawn();
       }
+    }
+
+    anyVisible() {
+      const p = this.piece;
+      return this.shape().some(c => p.y + c[1] >= HIDDEN);
+    }
+
+    // Perfect clear: once `rows` are gone nothing is left on the board.
+    isPerfectClear(rows) {
+      for (let y = 0; y < TOTAL; y++) {
+        if (rows.includes(y)) continue;
+        for (let x = 0; x < COLS; x++) if (this.board.get(x, y)) return false;
+      }
+      return true;
+    }
+
+    award(n, tspin, perfect) {
+      let points;
+      if (tspin === 'full') points = SCORE.tspin[n];
+      else if (tspin === 'mini') points = SCORE.mini[Math.min(n, 2)];
+      else points = SCORE.clear[n];
+      points *= this.level;
+
+      const parts = [];
+      if (tspin) parts.push(tspin === 'mini' ? 'T-SPIN MINI' : 'T-SPIN');
+      if (n) parts.push(CLEAR_NAMES[n]);
+
+      if (n > 0) {
+        const difficult = n === 4 || tspin !== null;
+        if (difficult && this.b2b) {
+          points = Math.floor(points * SCORE.b2b);
+          parts.unshift('B2B');
+        }
+        this.b2b = difficult;
+        this.combo++;
+        if (this.combo > 0) {
+          points += SCORE.combo * this.combo * this.level;
+          parts.push('COMBO x' + this.combo);
+        }
+        if (perfect) {
+          points += SCORE.perfect[n] * this.level;
+          parts.push('PERFECT CLEAR');
+        }
+        this.lines += n;
+        this.level = 1 + Math.floor(this.lines / LINES_PER_LEVEL);
+      } else {
+        this.combo = -1;
+      }
+
+      this.score += points;
+      if (parts.length) this.toast = { text: parts.join('  '), t: 0 };
     }
 
     finishClear() {
@@ -197,6 +304,10 @@
     // ---- the tick -----------------------------------------------------
 
     update(dt) {
+      if (this.toast) {
+        this.toast.t += dt;
+        if (this.toast.t >= TOAST_MS) this.toast = null;
+      }
       if (this.over) return;
 
       if (this.clearing) {
@@ -211,7 +322,7 @@
       while (this.gravityAcc >= step) {
         this.gravityAcc -= step;
         if (!this.fall()) { this.gravityAcc = 0; break; }
-        if (this.piece.y > this.lowestY) { this.lowestY = this.piece.y; this.lockResets = 0; }
+        if (this.softDropping) this.score += SCORE.softDrop;
       }
 
       // Lock delay: once the piece cannot fall, it has LOCK_DELAY_MS before
@@ -227,5 +338,8 @@
     }
   }
 
-  root.GameModule = { Game, gravityMsForLevel, LOCK_DELAY_MS, LOCK_RESET_CAP, CLEAR_ANIM_MS };
+  root.GameModule = {
+    Game, gravityMsForLevel, SCORE,
+    LOCK_DELAY_MS, LOCK_RESET_CAP, CLEAR_ANIM_MS, TOAST_MS, LINES_PER_LEVEL,
+  };
 })(typeof module !== 'undefined' ? module.exports : window);

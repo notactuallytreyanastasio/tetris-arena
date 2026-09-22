@@ -37,8 +37,44 @@
   }
 
   class Renderer {
-    constructor(boardCanvas) {
-      this.ctx = setupCanvas(boardCanvas, COLS, ROWS);
+    constructor(els) {
+      this.ctx = setupCanvas(els.board, COLS, ROWS);
+      this.els = els;
+      // Last values written to the DOM; textContent only changes when a
+      // value does (taken from agent-3).
+      this.shown = { score: -1, level: -1, lines: -1, toast: '', overlay: '' };
+    }
+
+    draw(game, paused) {
+      this.drawBoard(game);
+      this.drawHud(game, paused);
+    }
+
+    drawHud(game, paused) {
+      const els = this.els, shown = this.shown;
+      if (shown.score !== game.score) els.score.textContent = shown.score = game.score;
+      if (shown.level !== game.level) els.level.textContent = shown.level = game.level;
+      if (shown.lines !== game.lines) els.lines.textContent = shown.lines = game.lines;
+
+      const toast = game.toast ? game.toast.text : '';
+      if (shown.toast !== toast) {
+        shown.toast = toast;
+        if (toast) els.toast.textContent = toast;
+        els.toast.classList.toggle('show', !!toast);
+      }
+
+      const overlay = game.over ? 'over' : paused ? 'paused' : '';
+      if (shown.overlay !== overlay) {
+        shown.overlay = overlay;
+        els.overlay.classList.toggle('hidden', !overlay);
+        if (overlay === 'over') {
+          els.overlayTitle.textContent = 'Game over';
+          els.overlayHint.textContent = 'press R to restart';
+        } else if (overlay === 'paused') {
+          els.overlayTitle.textContent = 'Paused';
+          els.overlayHint.textContent = 'press P to resume';
+        }
+      }
     }
 
     drawBoard(game) {
