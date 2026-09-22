@@ -8,7 +8,8 @@
   const nextView = makePreview($('next'), QUEUE_DEPTH);
   const holdView = makePreview($('hold'), 1);
 
-  attachInput(game);
+  const input = new Input(game);
+  input.attach(window, document);
 
   // DOM writes only when a value changes (taken from agent-3): textContent
   // every frame forces layout work for nothing.
@@ -37,6 +38,7 @@
     // Clamp dt so a backgrounded tab does not dump seconds of gravity at once.
     const dt = Math.min(now - last, 100);
     last = now;
+    if (game.status !== 'paused') input.update(dt);
     game.tick(dt);
     renderer.draw(game);
     nextView.draw(game.queue.slice(0, QUEUE_DEPTH));

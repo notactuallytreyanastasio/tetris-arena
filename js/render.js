@@ -90,6 +90,22 @@ function makeRenderer(boardCanvas) {
     }
   }
 
+  // Fading vertical streak where a hard drop just passed.
+  function drawTrail(game) {
+    const t = game.trail;
+    if (!t) return;
+    const life = t.ms / TRAIL_MS;
+    for (const [x, fromY, toY] of t.cols) {
+      const y0 = Math.max(fromY - HIDDEN, 0), y1 = toY - HIDDEN;
+      if (y1 <= y0) continue;
+      const grad = ctx.createLinearGradient(0, y0 * CELL, 0, y1 * CELL);
+      grad.addColorStop(0, 'rgba(255,255,255,0)');
+      grad.addColorStop(1, `rgba(255,255,255,${0.35 * life})`);
+      ctx.fillStyle = grad;
+      ctx.fillRect(x * CELL + 4, y0 * CELL, CELL - 8, (y1 - y0) * CELL);
+    }
+  }
+
   // Scoring feedback stacked from the middle of the board, fading out.
   function drawToasts(game) {
     if (!game.toasts.length) return;
@@ -124,6 +140,7 @@ function makeRenderer(boardCanvas) {
       }
     }
 
+    drawTrail(game);
     if (game.piece) {
       const color = COLORS[game.piece.id];
       const gy = game.ghostY();

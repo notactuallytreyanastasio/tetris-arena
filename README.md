@@ -1,35 +1,107 @@
-# Tetris Arena
+# Tetris, agent-4
 
-Ten Claude Code sessions, each building its own Tetris in its own git
-worktree, all logging to one deciduous workspace and all reading each other's
-code and reasoning as they go. A demo of deciduous as the shared memory
-between concurrent agents.
+Open `index.html`. No build, no dependencies. `node test/run.js` runs 71
+checks against the DOM-free core.
 
-    ./launch.sh          # ten agents, ten iTerm2 panes
-    ./launch.sh 4        # fewer
-    ./launch.sh 3 --dry-run   # panes and worktrees, no claude sessions
-    ./launch.sh --reset  # remove every worktree and agent-* branch
+## Shape
 
-Each agent starts in `agents/agent-N/` on branch `agent-N`, reads `CLAUDE.md`
-(the arena rules) and goes. Sessions launch with
-`--dangerously-skip-permissions` so ten panes do not sit waiting for you to
-approve `git commit`; pass `--ask` to keep the prompts.
+Six classic `<script>` tags, loaded in order, sharing one global scope.
+ES modules were rejected because Chrome refuses `import` from `file://` and
+the game has to open by double-click.
 
-Needs: iTerm2, `claude` and `deciduous` on PATH, and a token stored by
-`deciduous remote login`. The workspace `tetris-arena` is created on the
-server the first time an agent writes to it.
+| file            | owns                                                             |
+|-----------------|------------------------------------------------------------------|
+| `js/pieces.js`  | spawn matrices, rotation states derived at load, SRS kick tables, 7-bag |
+| `js/board.js`   | grid as array of rows, collision, merge, full-row scan, lock-out test |
+| `js/game.js`    | `Game`: all rules and timers, no DOM                             |
+| `js/render.js`  | canvas drawing: board, ghost, lock pulse, drop trail, toasts, previews |
+| `js/input.js`   | `Input`: DAS/ARR clock and the held-direction stack, no DOM until `attach()` |
+| `js/main.js`    | one rAF loop, HUD writes, overlay                                 |
 
-## Watching
+The only hand-typed table is the wall-kick table. Rotation states come from
+rotating the spawn matrix clockwise three times, so a typo can only be in
+one place.
 
-Every pane is an ordinary interactive session; you can type into any of them.
+## Rules that are not obvious
 
-For the graph side, from any Claude Code session:
+**Time is one accumulator.** `tick(dt)` adds elapsed milliseconds to
+whichever timer is live: gravity, the 500ms lock delay, the 180ms clear
+flash, toast and trail lifetimes. Pause is one status flag; nothing else
+needs to know. `dt` is clamped to 100ms so a backgrounded tab does not dump
+seconds of gravity on return, and a hidden tab pauses outright.
 
-    deciduous remote watch --claude-code
+**Four hidden rows, solid ceiling.** SRS kicks can lift a piece two rows.
+With two hidden rows, a piece rotating at the top was either refused by the
+bounds check or, worse, locked with cells above row 0 that `merge()` silently
+dropped. Now rows above 0 collide like walls, a piece spawns with its lowest
+cell in the last hidden row, and there is always exactly two rows of kick
+headroom. `merge()` has no guard because there is nothing to guard.
 
-prints a `Monitor(...)` call that streams every write to the workspace as it
-lands. Ten agents make that a busy stream. `check_activity` on workspace
-`tetris-arena` shows who holds a write lock right now.
+**Two ways to lose.** Block-out: the spawn overlaps the stack. Lock-out: a
+piece settles entirely in the hidden rows.
 
-Afterwards, the ten games are on branches `agent-1` .. `agent-10`, and their
-reasoning is the `tetris-arena` workspace on the server.
+**Lock delay resets 15 times, then refills.** A move or rotate while
+grounded restarts the 500ms delay, at most 15 times since the piece last
+reached a new lowest row. Falling further grants fresh resets.
+
+**A rotate followed by a fall is not a T-spin.** The `spun` flag on the piece
+is cleared by every successful move and gravity step. Detection is the
+3-corner rule: T, last action a rotation, at least three of the four
+diagonals around its centre solid. Full if both corners on the pointing side
+are solid or it arrived via kick test 5; otherwise mini.
+
+**Scoring.** Guideline table x level; T-spins 400/800/1200/1600, minis
+100/200/400; back-to-back 1.5x chains tetrises and T-spin clears; combo
+50 x n x level; perfect clear 800/1200/1800/2000. Every event posts a toast
+on the board so the player can see why the score moved.
+
+**DAS charges through the clear flash.** `Input.update(dt)` runs every
+frame whether or not a piece exists; only `move()` needs one. A direction
+held through a line clear repeats at ARR the moment the next piece appears.
+Held directions are a stack: newest press wins, release falls back to the
+older one with the charge kept.
+
+## Keys
+
+Left/Right move, Up or X rotate clockwise, Z or Ctrl counter-clockwise,
+Down soft drop (20x gravity, +1 per row), Space hard drop (+2 per row),
+C or Shift hold (once per piece), P or Esc pause, R restart.
+
+## What I took, from whom
+
+Everything below is also an `observation` on branch `agent-4` in the
+`tetris-arena` decision graph, linked to the action that used it.
+
+- **DPR-scaled canvas** from agent-1: backing store at `devicePixelRatio`,
+  context transform set once, draw code stays in CSS pixels.
+- **4 hidden rows** from agent-3 and agent-9, **solid ceiling** from
+  agent-6, **lock-out** from agent-1. My M1 board lost cells silently; this
+  is the fix.
+- **Clear table, back-to-back, change-only HUD writes** from agent-3. I
+  added the combo counter.
+- **3-corner T-spin rule with kick-5 upgrade** from agent-5. I moved the
+  spun flag onto the piece and clear it on any non-rotation movement.
+- **Outline ghost and lock-delay pulse** from agent-5. Outline because a
+  translucent fill blends into the stack; pulse so the lock is never a
+  surprise.
+- **Lowest-row lock reset** from agent-6.
+- **Held-direction stack** from agent-1, who took release-resumes from
+  agent-3. **Charged hand-off** from agent-6. **DAS through the flash** from
+  agent-10, who found every game had the hitch.
+- **Perfect clear** from agent-8. **Auto-pause on hidden tab** from agent-5
+  and agent-6. **Tests in the repo** from agent-3.
+- **Headless-Chrome verification** is mine and agent-3 took it; the trick
+  is that headless Chrome fires `requestAnimationFrame` once, so probes call
+  `game.tick()` themselves and report through `document.title` for
+  `--dump-dom`.
+
+Mine that nobody else had at the time: on-board scoring toasts and the
+hard-drop trail.
+
+## What does not work
+
+- No touch or gamepad input.
+- No high-score persistence.
+- The clear flash is a flat white; no per-row animation.
+- Soft drop is a gravity divisor, so at level 15+ it is no faster than
+  gravity already is.

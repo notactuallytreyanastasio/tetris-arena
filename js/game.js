@@ -13,8 +13,10 @@ const CLEAR_SCORE = [0, 100, 300, 500, 800];  // guideline, x level
 const TSPIN_SCORE = [400, 800, 1200, 1600];   // full T-spin, by lines cleared
 const MINI_SCORE = [100, 200, 400];           // mini T-spin, by lines cleared
 const COMBO_SCORE = 50;                       // x combo x level
+const PERFECT_SCORE = [0, 800, 1200, 1800, 2000]; // perfect clear, x level (via agent-8)
 const QUEUE_DEPTH = 3;
 const TOAST_MS = 900;
+const TRAIL_MS = 120;         // hard-drop streak lifetime
 
 // Guideline gravity: seconds per row = (0.8 - (level-1)*0.007)^(level-1).
 // Level 1 = 1000ms, 5 = 355ms, 10 = 64ms, 15 = 7ms. Clamped at level 20.
@@ -36,6 +38,7 @@ class Game {
     this.hold = 0;              // held piece id, 0 = none
     this.holdUsed = false;      // hold is once per piece
     this.toasts = [];           // [{ text, ms }] scoring feedback on the board
+    this.trail = null;          // { cols: [[x, fromY, toY]], ms } after a hard drop
     this.piece = null;          // { id, rot, x, y, lowestY, spun, kick }
     this.score = 0;
     this.lines = 0;
@@ -184,9 +187,26 @@ class Game {
 
   hardDrop() {
     if (!this.active()) return;
-    while (this.step()) this.score += 2;
+    const shape = this.shape(), x = this.piece.x, fromY = this.piece.y;
+    let rows = 0;
+    while (this.step()) rows++;
+    this.score += 2 * rows;
+    if (rows > 0) {
+      // One streak per column of the piece, from its old top cell to its new one.
+      const cols = [];
+      for (let c = 0; c < shape[0].length; c++) {
+        let top = -1;
+        for (let r = 0; r < shape.length; r++) if (shape[r][c]) { top = r; break; }
+        if (top >= 0) cols.push([x + c, fromY + top, this.piece.y + top]);
+      }
+      this.trail = { cols, ms: TRAIL_MS };
+    }
     this.lock();
   }
+
+  pause() { if (this.status === 'playing') this.status = 'paused'; }
+  resume() { if (this.status === 'paused') this.status = 'playing'; }
+  togglePause() { this.status === 'paused' ? this.resume() : this.pause(); }
 
   setSoftDrop(on) { this.softDrop = on; }
 
@@ -244,6 +264,12 @@ class Game {
     const label = spin ? `${spin === 'mini' ? 'MINI ' : ''}T-SPIN ${name}` : name;
     this.toast(`${chained ? 'B2B ' : ''}${label} +${points}`);
     if (this.combo > 0) this.toast(`COMBO x${this.combo}`);
+
+    if (this.grid.every(row => row.every(v => v === 0))) {
+      const bonus = PERFECT_SCORE[n] * this.level;
+      this.score += bonus;
+      this.toast(`PERFECT CLEAR +${bonus}`);
+    }
     this.spawn();
   }
 
@@ -262,9 +288,10 @@ class Game {
   }
 
   tick(dt) {
+    if (this.status !== 'playing') return;
     for (const t of this.toasts) t.ms -= dt;
     this.toasts = this.toasts.filter(t => t.ms > 0);
-    if (this.status !== 'playing') return;
+    if (this.trail && (this.trail.ms -= dt) <= 0) this.trail = null;
 
     if (this.clearing) {
       this.clearing.ms -= dt;
