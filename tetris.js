@@ -2,11 +2,14 @@
 
 // ---------------------------------------------------------------------------
 // Geometry. The board is COLS wide and TOTAL tall; the top BUFFER rows are
-// hidden and exist so pieces can spawn above the visible field.
+// hidden and exist so pieces can spawn above the visible field. Four rather
+// than two so an SRS kick that lifts a piece two rows at the very top is
+// never refused by the bounds check (agent-1 solved the same problem with a
+// 40-row board; four hidden rows is the cheapest version of that idea).
 // ---------------------------------------------------------------------------
 const COLS = 10;
 const ROWS = 20;
-const BUFFER = 2;
+const BUFFER = 4;
 const TOTAL = ROWS + BUFFER;
 const CELL = 30;
 
@@ -86,6 +89,38 @@ const COLOR_BY_ID = [null];
 for (const n of NAMES) COLOR_BY_ID[PIECES[n].id] = PIECES[n].color;
 
 // ---------------------------------------------------------------------------
+// SRS wall kicks. Keyed by "fromTo" rotation state. The guideline tables are
+// written with y up; these are already flipped to y down so they can be added
+// straight to the piece origin. Five offsets per transition, tried in order.
+// ---------------------------------------------------------------------------
+const KICKS_JLSTZ = {
+  '01': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  '10': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  '12': [[0, 0], [1, 0], [1, 1], [0, -2], [1, -2]],
+  '21': [[0, 0], [-1, 0], [-1, -1], [0, 2], [-1, 2]],
+  '23': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+  '32': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  '30': [[0, 0], [-1, 0], [-1, 1], [0, -2], [-1, -2]],
+  '03': [[0, 0], [1, 0], [1, -1], [0, 2], [1, 2]],
+};
+const KICKS_I = {
+  '01': [[0, 0], [-2, 0], [1, 0], [-2, 1], [1, -2]],
+  '10': [[0, 0], [2, 0], [-1, 0], [2, -1], [-1, 2]],
+  '12': [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
+  '21': [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
+  '23': [[0, 0], [2, 0], [-1, 0], [2, -1], [-1, 2]],
+  '32': [[0, 0], [-2, 0], [1, 0], [-2, 1], [1, -2]],
+  '30': [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
+  '03': [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
+};
+const NO_KICK = [[0, 0]];
+
+function kicksFor(name, from, to) {
+  if (name === 'O') return NO_KICK;
+  return (name === 'I' ? KICKS_I : KICKS_JLSTZ)[String(from) + String(to)];
+}
+
+// ---------------------------------------------------------------------------
 // Board: flat Uint8Array, 0 = empty, otherwise the piece id. Index is y*COLS+x.
 // ---------------------------------------------------------------------------
 function makeBoard() {
@@ -138,6 +173,15 @@ function gravityMs(level) {
 }
 
 // ---------------------------------------------------------------------------
+// Timing, all in ms. Everything is advanced by the frame delta.
+// ---------------------------------------------------------------------------
+const LOCK_DELAY = 500;     // grounded piece locks after this long
+const LOCK_RESETS = 15;     // ...unless moved/rotated, up to this many times
+const DAS = 170;            // held left/right: delay before auto-shift
+const ARR = 40;             // ...then this long between shifts
+const SOFT_DROP_MULT = 20;  // soft drop is this many times gravity
+
+// ---------------------------------------------------------------------------
 // Game state
 // ---------------------------------------------------------------------------
 const game = {
@@ -146,7 +190,16 @@ const game = {
   cur: null,          // { name, rot, x, y }
   level: 1,
   gravityAcc: 0,      // ms accumulated toward the next gravity step
+  lockAcc: 0,         // ms the piece has been resting on something
+  lockResets: 0,      // move-resets used for the current piece
   over: false,
+};
+
+const input = {
+  left: false, right: false, down: false,
+  dasDir: 0,          // -1, 0, +1: direction currently auto-shifting
+  dasAcc: 0,          // ms held toward DAS, then toward the next ARR shift
+  charged: false,     // DAS elapsed, now in ARR
 };
 
 function spawn() {
@@ -158,6 +211,8 @@ function spawn() {
     if (fits(game.board, name, 0, x, y)) {
       game.cur = { name, rot: 0, x, y };
       game.gravityAcc = 0;
+      game.lockAcc = 0;
+      game.lockResets = 0;
       return true;
     }
   }
@@ -172,23 +227,141 @@ function lockPiece() {
   spawn();
 }
 
-function stepGravity() {
+function grounded() {
   const c = game.cur;
-  if (fits(game.board, c.name, c.rot, c.x, c.y + 1)) {
-    c.y += 1;
-  } else {
-    lockPiece();
+  return !fits(game.board, c.name, c.rot, c.x, c.y + 1);
+}
+
+// A successful move or rotate while resting on something restarts the lock
+// timer, but only LOCK_RESETS times, so you cannot stall a piece forever.
+function noteMoved() {
+  if (grounded() && game.lockResets < LOCK_RESETS) {
+    game.lockAcc = 0;
+    game.lockResets += 1;
+  }
+}
+
+function tryMove(dx, dy) {
+  const c = game.cur;
+  if (!fits(game.board, c.name, c.rot, c.x + dx, c.y + dy)) return false;
+  c.x += dx;
+  c.y += dy;
+  return true;
+}
+
+function move(dx) {
+  if (game.over) return;
+  if (tryMove(dx, 0)) noteMoved();
+}
+
+// dir is +1 for clockwise, -1 for counter-clockwise. Try each kick offset for
+// the (from, to) pair; first fit wins.
+function rotate(dir) {
+  if (game.over) return;
+  const c = game.cur;
+  const to = (c.rot + dir + 4) % 4;
+  const kicks = kicksFor(c.name, c.rot, to);
+  for (let i = 0; i < kicks.length; i++) {
+    const nx = c.x + kicks[i][0];
+    const ny = c.y + kicks[i][1];
+    if (fits(game.board, c.name, to, nx, ny)) {
+      c.rot = to;
+      c.x = nx;
+      c.y = ny;
+      noteMoved();
+      return true;
+    }
+  }
+  return false;
+}
+
+function hardDrop() {
+  if (game.over) return;
+  while (tryMove(0, 1)) { /* fall */ }
+  lockPiece();
+}
+
+function stepGravity() {
+  if (!tryMove(0, 1)) {
+    // resting: lock delay is handled in update()
+    return;
+  }
+  game.lockAcc = 0;
+}
+
+function updateInput(dt) {
+  // Horizontal auto-shift. dasDir is set on keydown so the first shift is
+  // immediate; holding then waits DAS and repeats every ARR.
+  if (input.dasDir !== 0) {
+    input.dasAcc += dt;
+    const threshold = input.charged ? ARR : DAS;
+    while (input.dasAcc >= threshold) {
+      input.dasAcc -= threshold;
+      input.charged = true;
+      move(input.dasDir);
+    }
   }
 }
 
 function update(dt) {
   if (game.over) return;
+  updateInput(dt);
+
+  const interval = input.down ? gravityMs(game.level) / SOFT_DROP_MULT : gravityMs(game.level);
   game.gravityAcc += dt;
-  const interval = gravityMs(game.level);
   while (game.gravityAcc >= interval && !game.over) {
     game.gravityAcc -= interval;
     stepGravity();
   }
+
+  if (grounded()) {
+    game.lockAcc += dt;
+    if (game.lockAcc >= LOCK_DELAY) lockPiece();
+  } else {
+    game.lockAcc = 0;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Input. keydown/keyup feed a held-key model so left/right can auto-repeat on
+// our own DAS/ARR clock instead of the OS key-repeat rate.
+// ---------------------------------------------------------------------------
+function startShift(dir) {
+  input.dasDir = dir;
+  input.dasAcc = 0;
+  input.charged = false;
+  move(dir);
+}
+
+function onKeyDown(e) {
+  if (e.repeat) return;
+  switch (e.code) {
+    case 'ArrowLeft':  input.left = true;  startShift(-1); break;
+    case 'ArrowRight': input.right = true; startShift(1);  break;
+    case 'ArrowDown':  input.down = true; break;
+    case 'ArrowUp': case 'KeyX': rotate(1); break;
+    case 'KeyZ': case 'ControlLeft': rotate(-1); break;
+    case 'Space': hardDrop(); break;
+    default: return;
+  }
+  e.preventDefault();
+}
+
+function onKeyUp(e) {
+  switch (e.code) {
+    case 'ArrowLeft':
+      input.left = false;
+      // releasing one direction while the other is held resumes the other
+      if (input.right) startShift(1); else input.dasDir = 0;
+      break;
+    case 'ArrowRight':
+      input.right = false;
+      if (input.left) startShift(-1); else input.dasDir = 0;
+      break;
+    case 'ArrowDown': input.down = false; break;
+    default: return;
+  }
+  e.preventDefault();
 }
 
 // ---------------------------------------------------------------------------
@@ -263,5 +436,11 @@ function frame(now) {
   requestAnimationFrame(frame);
 }
 
+window.addEventListener('keydown', onKeyDown);
+window.addEventListener('keyup', onKeyUp);
+
 spawn();
 requestAnimationFrame(frame);
+
+// Exposed for headless testing; not used by the game itself.
+window.__tetris = { game, input, PIECES, fits, move, rotate, hardDrop, update, spawn, COLS, ROWS, BUFFER };
