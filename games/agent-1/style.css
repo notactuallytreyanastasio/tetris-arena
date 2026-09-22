@@ -1,0 +1,113 @@
+:root {
+  --bg: #0d0f14;
+  --panel: #161a23;
+  --line: #262c3a;
+  --text: #dfe4ee;
+  --muted: #7b8497;
+  --cell: 30px;
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font: 14px/1.4 ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+
+.arena {
+  min-height: 100%;
+  display: flex;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 20px;
+  padding: 24px 16px;
+}
+
+.panel {
+  width: 168px;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.panel section {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 10px;
+}
+
+h2 {
+  margin: 0 0 8px;
+  font-size: 11px;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+canvas {
+  display: block;
+  background: #0a0c11;
+  border-radius: 4px;
+}
+
+#hold, #next { width: 120px; }
+#hold { height: 60px; }
+#next { height: 300px; }
+#seed { font-size: 11px; color: var(--muted); }
+
+.board-wrap {
+  position: relative;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  padding: 4px;
+  background: var(--panel);
+}
+
+#board { width: 300px; height: 600px; }
+
+.stats div {
+  display: flex;
+  justify-content: space-between;
+  padding: 4px 0;
+  border-bottom: 1px solid var(--line);
+}
+.stats div:last-child { border-bottom: 0; }
+.label { color: var(--muted); }
+
+.event-wrap { min-height: 42px; display: flex; align-items: center; }
+.event { color: var(--text); font-size: 12px; letter-spacing: .04em; }
+
+.keys dl {
+  margin: 0;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 8px;
+  font-size: 12px;
+}
+.keys dt { color: var(--muted); white-space: nowrap; }
+.keys dd { margin: 0; white-space: nowrap; }
+
+.overlay {
+  position: absolute;
+  inset: 4px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  background: rgba(10, 12, 17, .82);
+  border-radius: 4px;
+  text-align: center;
+}
+.overlay h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: .08em; }
+.overlay p { margin: 0 12px; color: var(--muted); }
+.hidden { display: none; }
+
+@media (max-width: 640px) {
+  .arena { flex-wrap: wrap; }
+  .panel { width: 45%; }
+  .board-wrap { order: -1; }
+}
