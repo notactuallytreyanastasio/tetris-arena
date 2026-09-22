@@ -5,15 +5,35 @@
   const input = new Input(game);
   input.attach(window);
   const boardCtx = document.getElementById('board').getContext('2d');
-  const scoreEl = document.getElementById('score');
-  const levelEl = document.getElementById('level');
-  const linesEl = document.getElementById('lines');
+  const overlay = document.getElementById('overlay');
+  const overlayTitle = document.getElementById('overlay-title');
+  const overlayHint = document.getElementById('overlay-hint');
+  const clearEl = document.getElementById('clear');
 
+  // HUD text is written only when it changes: DOM writes every frame cost
+  // layout even when the text is the same.
+  const hud = {};
+  for (const id of ['score', 'level', 'lines']) hud[id] = { el: document.getElementById(id), value: null };
+  function setText(slot, value) {
+    if (slot.value === value) return;
+    slot.value = value;
+    slot.el.textContent = value;
+  }
+
+  let shownClear = null;
   function draw() {
     Render.board(boardCtx, game);
-    scoreEl.textContent = game.score;
-    levelEl.textContent = game.level;
-    linesEl.textContent = game.lines;
+    setText(hud.score, game.score);
+    setText(hud.level, game.level);
+    setText(hud.lines, game.lines);
+    if (game.lastClear !== shownClear) {
+      shownClear = game.lastClear;
+      clearEl.textContent = shownClear ? `${shownClear.label} +${shownClear.points}` : '';
+      clearEl.classList.remove('pop'); void clearEl.offsetWidth; clearEl.classList.add('pop');
+    }
+    const showOverlay = game.over;
+    overlay.classList.toggle('hidden', !showOverlay);
+    if (game.over) { overlayTitle.textContent = 'GAME OVER'; overlayHint.textContent = 'R to restart'; }
   }
 
   let last = performance.now();

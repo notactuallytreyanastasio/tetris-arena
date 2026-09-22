@@ -31,10 +31,13 @@ const Render = (() => {
     ctx.stroke();
 
     const grid = game.board.grid;
+    const flashing = new Set(game.clearing ? game.clearing.rows : []);
+    // Full rows go white for the first half of the flash, then dim.
+    const flashColor = game.clearing && game.clearing.t < CLEAR_FLASH / 2 ? '#ffffff' : '#3a3f4d';
     for (let y = Board.HIDDEN; y < Board.H; y++) {
       for (let x = 0; x < W; x++) {
         const t = grid[y][x];
-        if (t) cell(ctx, x, y - Board.HIDDEN, PIECES.COLORS[t]);
+        if (t) cell(ctx, x, y - Board.HIDDEN, flashing.has(y) ? flashColor : PIECES.COLORS[t]);
       }
     }
 
