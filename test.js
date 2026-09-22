@@ -2,7 +2,7 @@
 // Headless checks for the engine. Run: node test.js
 // The DOM layer never runs here because `document` is undefined.
 const T = require('./tetris.js');
-const { COLS, BUFFER, TOTAL, NEXT_COUNT, newGame, clearLines, fits, DAS, ARR, LOCK_DELAY, CLEAR_FLASH } = T;
+const { COLS, BUFFER, TOTAL, NEXT_COUNT, newGame, clearLines, fits, DAS, ARR, LOCK_DELAY, CLEAR_FLASH, TRAIL } = T;
 
 let failures = 0;
 function check(name, got, want) {
@@ -252,6 +252,40 @@ function lcg(seed) { let s = seed; return () => (s = (s * 1664525 + 1013904223) 
   check('setPaused(true) twice stays paused', p.state.paused, true);
   p.state.over = true; p.setPaused(false);
   check('setPaused is ignored after game over', p.state.paused, true);
+}
+
+// --- Round 3: seeded bag, 180 rotation, hard-drop trail -------------------
+{
+  const a = newGame(12345), b = newGame(12345), c = newGame(54321);
+  const seq = g => { const out = [g.state.cur.name, ...g.state.queue]; for (let i = 0; i < 10; i++) out.push(g.state.bag()); return out.join(''); };
+  const sa = seq(a), sb = seq(b), sc = seq(c);
+  check('same seed gives the same piece sequence', [a.state.seed, sa === sb], [12345, true]);
+  check('different seed gives a different sequence', sa === sc, false);
+  check('no argument draws a fresh seed', typeof newGame().state.seed, 'number');
+
+  // 180: T pointing up flips to pointing down in place
+  const g = newGame(lcg(12));
+  g.state.board.fill(0);
+  g.state.cur = { name: 'T', rot: 0, x: 3, y: 10, lowestY: 10, kick: 0 };
+  check('180 in open space', [g.rotate(2), g.state.cur.rot, g.state.cur.x, g.state.cur.y], [true, 2, 3, 10]);
+  check('180 records kick 0 and counts as a rotation', [g.state.cur.kick, g.state.lastWasRotate], [0, true]);
+  // I flush against the floor in state 1 cannot 180 in place... state 3 uses the same column set shifted; check it kicks
+  g.state.cur = { name: 'I', rot: 1, x: 7, y: TOTAL - 4, lowestY: TOTAL - 4, kick: 0 }; // vertical I in column 9, on the floor
+  check('I vertical on the floor at the wall flips with a kick', [g.rotate(2), g.state.cur.rot, g.state.cur.x <= 8], [true, 3, true]);
+  check('press flip routes to rotate(2)', [g.press('flip'), g.state.cur.rot], [true, 1]);
+
+  // trail: hard drop records one streak per column and it expires
+  g.state.board.fill(0);
+  g.state.cur = { name: 'L', rot: 0, x: 3, y: BUFFER, lowestY: BUFFER, kick: 0 };
+  g.hardDrop();
+  const tr = g.state.trail;
+  check('hard drop leaves a trail with one span per column', [tr.cols.length, tr.cols.map(([x]) => x)], [3, [5, 3, 4]]);
+  check('trail spans run from the old top to the new top', tr.cols.every(([, y0, y1]) => y1 - y0 === TOTAL - 2 - BUFFER), true);
+  g.update(TRAIL + 1);
+  check('trail expires after TRAIL ms', g.state.trail, null);
+  g.state.cur = { name: 'O', rot: 0, x: 0, y: TOTAL - 2, lowestY: TOTAL - 2, kick: 0 };
+  g.hardDrop();
+  check('a hard drop that moves zero rows leaves no trail', g.state.trail, null);
 }
 
 console.log(failures === 0 ? '\nall checks passed' : `\n${failures} check(s) FAILED`);

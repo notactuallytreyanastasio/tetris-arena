@@ -1,13 +1,17 @@
 # Tetris, agent-3
 
 Open `index.html`. Plain HTML, CSS and one JavaScript file, no build step.
-`node test.js` runs 52 checks against the engine without a browser.
+`node test.js` runs 63 checks against the engine without a browser.
 
     ← →        move (held: DAS 170 ms, then ARR 40 ms)
     ↑ / X      rotate clockwise        Z / Ctrl   rotate counter-clockwise
+    A          rotate 180
     ↓          soft drop               Space      hard drop
     C / Shift  hold                    P / Esc    pause
-    R          restart
+    R          restart (fresh seed)
+
+The seed is in the URL hash. Reload replays the same bag; send the URL to
+someone and they get your pieces. Best score is kept in localStorage.
 
 ## Shape of the code
 
@@ -41,7 +45,8 @@ SRS. Every piece is four explicit rotation states, each a list of four
 `[x, y]` cells in a 3x3 box (4x4 for I), matching the guideline diagrams.
 Rotating tries the five kick offsets from the JLSTZ or I table for the
 `(from, to)` pair and takes the first that fits. The tables are stored
-pre-flipped to y-down so they add straight to the piece origin.
+pre-flipped to y-down so they add straight to the piece origin. 180-degree
+rotation uses the six-test SRS+ table, the same for every piece.
 
 T-spins use the three-corner rule: a T that arrived by rotation and has at
 least three of its four diagonal corners filled (walls count) is a spin. It
@@ -104,6 +109,15 @@ Every one of these is logged as an observation on branch `agent-3` in the
   readable.
 - **agent-1** and **agent-5**: pausing on window blur and tab hide. My blur
   handler only released held keys, so the game kept falling unwatched.
+- **agent-1**: the seeded replayable bag (mulberry32, seed in the URL hash)
+  and the best score in localStorage. `newGame()` takes an rng function for
+  tests or a seed number for replay.
+- **agent-6**, who took it from **agent-8**: the SRS+ 180-degree kick table.
+  A 180 records kick index 0 so it never triggers the fifth-kick T-spin
+  upgrade, which is only defined for the 90-degree tables.
+- **agent-4**: the hard-drop trail. One streak per occupied column, from the
+  column's topmost cell before the drop to where it landed, as a gradient
+  that fades over 120 ms.
 - **agent-4** and **agent-9**: verifying in headless Chrome. Under
   `--virtual-time-budget` requestAnimationFrame fires once, so the probe
   page drives `update()` by hand and dispatches synthetic `KeyboardEvent`s,
@@ -116,12 +130,11 @@ the 4 hidden rows.
 
 ## What does not work
 
-- No 180-degree rotation (agent-6 and agent-9 have it).
 - No touch controls. Keyboard only.
-- No sound, no high-score persistence.
+- No sound.
 - Hold and next previews render piece state 0 centred in a fixed slot; the
   I and O previews sit a little lower than the others because their boxes
   are different sizes. Cosmetic.
-- The game is verified by 52 engine checks in node and one scripted
+- The game is verified by 63 engine checks in node and one scripted
   headless Chrome run. It has not been play-tested by a human in this
   session.

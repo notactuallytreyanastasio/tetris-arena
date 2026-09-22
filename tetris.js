@@ -120,11 +120,22 @@ const KICKS_I = {
   '30': [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
   '03': [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
 };
+// 180-degree rotation. Guideline SRS has no 180 table; this is TETR.IO's
+// SRS+ table, six tests, the same for every piece. From agent-6, who took it
+// from agent-8; flipped to y-down here like the tables above.
+const KICKS_180 = {
+  '02': [[0, 0], [0, -1], [1, -1], [-1, -1], [1, 0], [-1, 0]],
+  '20': [[0, 0], [0, 1], [-1, 1], [1, 1], [-1, 0], [1, 0]],
+  '13': [[0, 0], [1, 0], [1, -2], [1, -1], [0, -2], [0, -1]],
+  '31': [[0, 0], [-1, 0], [-1, -2], [-1, -1], [0, -2], [0, -1]],
+};
 const NO_KICK = [[0, 0]];
 
 function kicksFor(name, from, to) {
   if (name === 'O') return NO_KICK;
-  return (name === 'I' ? KICKS_I : KICKS_JLSTZ)[String(from) + String(to)];
+  const key = String(from) + String(to);
+  if ((to - from + 4) % 4 === 2) return KICKS_180[key];
+  return (name === 'I' ? KICKS_I : KICKS_JLSTZ)[key];
 }
 
 // ---------------------------------------------------------------------------
@@ -217,6 +228,23 @@ function makeBag(rng) {
   };
 }
 
+// mulberry32: small seeded PRNG so a game is replayable from its seed
+// (from agent-1). Returns a function in [0, 1) like Math.random.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function freshSeed() {
+  return (Date.now() ^ (Math.random() * 0xffffffff)) >>> 0;
+}
+
 // Guideline gravity curve: seconds per row at a given level.
 function gravityMs(level) {
   const l = Math.min(level, 20) - 1;
@@ -238,17 +266,28 @@ const MINI_SCORE = [100, 200, 400];                 // mini T-spin with 0..2 lin
 const PERFECT_SCORE = [0, 800, 1200, 1800, 2000];   // perfect clear, x level
 const COMBO_SCORE = 50;                             // x combo x level
 const CLEAR_FLASH = 120;    // ms full rows stay lit before collapsing
+const TRAIL = 120;          // ms a hard-drop streak stays visible
 const LOCK_FLASH = 80;      // ms a just-locked piece is highlighted
 const CLEAR_NAMES = ['', 'SINGLE', 'DOUBLE', 'TRIPLE', 'TETRIS'];
 
 // ---------------------------------------------------------------------------
 // Game. newGame() returns a self-contained state object plus the functions
-// that act on it, so tests can run several games side by side.
+// that act on it, so tests can run several games side by side. The argument
+// is an rng function (tests), a seed number (replay), or nothing.
 // ---------------------------------------------------------------------------
-function newGame(rng = Math.random) {
+function newGame(arg) {
+  let seed = null;
+  let rng;
+  if (typeof arg === 'function') rng = arg;
+  else {
+    seed = typeof arg === 'number' ? arg >>> 0 : freshSeed();
+    rng = mulberry32(seed);
+  }
   const g = {
+    seed,
     board: makeBoard(),
     bag: makeBag(rng),
+    trail: null,        // { cols: [[x, fromY, toY]], acc, color } after a hard drop
     queue: [],          // upcoming piece names, NEXT_COUNT long
     cur: null,          // { name, rot, x, y }
     hold: null,         // piece name parked by the player
@@ -358,8 +397,8 @@ function newGame(rng = Math.random) {
     return true;
   }
 
-  // dir is +1 for clockwise, -1 for counter-clockwise. Try each kick offset
-  // for the (from, to) pair; first fit wins.
+  // dir is +1 for clockwise, -1 for counter-clockwise, 2 for a 180. Try
+  // each kick offset for the (from, to) pair; first fit wins.
   function rotate(dir) {
     if (g.over || g.paused || !g.cur) return false;
     const c = g.cur;
@@ -372,7 +411,9 @@ function newGame(rng = Math.random) {
         c.rot = to;
         c.x = nx;
         c.y = ny;
-        c.kick = i;
+        // The fifth-kick T-spin upgrade is defined for the 90-degree tables;
+        // a 180 leaves it to the corner rule alone.
+        c.kick = dir === 2 ? 0 : i;
         g.lastWasRotate = true;
         noteMoved();
         return true;
@@ -496,9 +537,23 @@ function newGame(rng = Math.random) {
 
   function hardDrop() {
     if (g.over || g.paused || !g.cur) return;
+    const c = g.cur;
+    const fromY = c.y;
     let rows = 0;
     while (tryMove(0, 1)) rows++;
-    if (rows > 0) g.lastWasRotate = false;
+    if (rows > 0) {
+      g.lastWasRotate = false;
+      // one streak per occupied column, from its topmost cell before the
+      // drop to where that cell landed (shape from agent-4)
+      const cells = PIECES[c.name].states[c.rot];
+      const top = new Map();
+      for (const [dx, dy] of cells) {
+        if (!top.has(dx) || dy < top.get(dx)) top.set(dx, dy);
+      }
+      const cols = [];
+      for (const [dx, dy] of top) cols.push([c.x + dx, fromY + dy, c.y + dy]);
+      g.trail = { cols, acc: 0, color: PIECES[c.name].color };
+    }
     addScore(rows * 2);
     lockPiece();
   }
@@ -530,6 +585,10 @@ function newGame(rng = Math.random) {
     if (g.lockFlash) {
       g.lockFlash.acc += dt;
       if (g.lockFlash.acc >= LOCK_FLASH) g.lockFlash = null;
+    }
+    if (g.trail) {
+      g.trail.acc += dt;
+      if (g.trail.acc >= TRAIL) g.trail = null;
     }
     if (g.clearing) {
       // DAS keeps charging so a held direction carries into the next piece.
@@ -577,6 +636,7 @@ function newGame(rng = Math.random) {
       case 'down':  inp.down = true; break;
       case 'cw':    rotate(1); break;
       case 'ccw':   rotate(-1); break;
+      case 'flip':  rotate(2); break;
       case 'hard':  hardDrop(); break;
       case 'hold':  holdPiece(); break;
       case 'pause': if (!g.over) g.paused = !g.paused; break;
@@ -617,7 +677,7 @@ if (typeof module !== 'undefined') {
     COLS, ROWS, BUFFER, TOTAL, NEXT_COUNT, PIECES, KICKS_JLSTZ, KICKS_I,
     LOCK_DELAY, LOCK_RESETS, DAS, ARR,
     makeBoard, fits, stamp, fullRows, collapse, clearLines, emptyExcept,
-    makeBag, gravityMs, newGame, CLEAR_FLASH, LOCK_FLASH,
+    makeBag, gravityMs, newGame, mulberry32, KICKS_180, CLEAR_FLASH, LOCK_FLASH, TRAIL,
   };
 }
 
@@ -639,7 +699,20 @@ function mount(doc) {
     overlayTitle: doc.getElementById('overlay-title'),
     overlayHint: doc.getElementById('overlay-hint'),
     toast: doc.getElementById('toast'),
+    seed: doc.getElementById('seed'),
+    best: doc.getElementById('best'),
   };
+  const BEST_KEY = 'tetris-agent-3-best';
+  let best = 0;
+  try { best = Number(localStorage.getItem(BEST_KEY)) || 0; } catch (e) { /* file:// may refuse */ }
+
+  function seedFromHash() {
+    const m = /seed=(\d+)/.exec(window.location.hash);
+    return m ? Number(m[1]) >>> 0 : undefined;
+  }
+  function publishSeed(seed) {
+    try { history.replaceState(null, '', '#seed=' + seed); } catch (e) { /* file:// may refuse */ }
+  }
   const PREVIEW_CELL = 20;
   const PREVIEW_W = 4 * PREVIEW_CELL + 16;
   const PREVIEW_H = 3 * PREVIEW_CELL;
@@ -658,7 +731,8 @@ function mount(doc) {
   fitCanvas(nextCanvas, PREVIEW_W, PREVIEW_H * NEXT_COUNT);
   fitCanvas(holdCanvas, PREVIEW_W, PREVIEW_H);
 
-  let game = newGame();
+  let game = newGame(seedFromHash());
+  publishSeed(game.state.seed);
 
   function drawCell(c, px, py, color, size, alpha = 1) {
     c.globalAlpha = alpha;
@@ -710,7 +784,7 @@ function mount(doc) {
     }
   }
 
-  const shown = { score: -1, level: -1, lines: -1, overlay: null, queue: '', hold: '', toast: 0 };
+  const shown = { score: -1, level: -1, lines: -1, overlay: null, queue: '', hold: '', toast: 0, seed: null, best: -1 };
 
   // DOM writes only when a value changes; textContent every frame is wasteful.
   function renderHud() {
@@ -718,6 +792,12 @@ function mount(doc) {
     if (shown.score !== g.score) hud.score.textContent = shown.score = g.score;
     if (shown.level !== g.level) hud.level.textContent = shown.level = g.level;
     if (shown.lines !== g.lines) hud.lines.textContent = shown.lines = g.lines;
+    if (shown.seed !== g.seed) hud.seed.textContent = shown.seed = g.seed;
+    if (g.over && g.score > best) {
+      best = g.score;
+      try { localStorage.setItem(BEST_KEY, String(best)); } catch (e) { /* ignore */ }
+    }
+    if (shown.best !== best) hud.best.textContent = shown.best = best;
 
     const state = g.over ? 'over' : g.paused ? 'paused' : null;
     if (shown.overlay !== state) {
@@ -787,6 +867,23 @@ function mount(doc) {
       }
     }
 
+    // hard-drop streaks: a gradient in the piece colour fading over TRAIL ms
+    if (g.trail) {
+      const a = 0.45 * (1 - g.trail.acc / TRAIL);
+      ctx.globalAlpha = a;
+      for (const [x, fromY, toY] of g.trail.cols) {
+        const y0 = Math.max(fromY, BUFFER) - BUFFER;
+        const y1 = toY - BUFFER;
+        if (y1 <= y0) continue;
+        const grad = ctx.createLinearGradient(0, y0 * CELL, 0, y1 * CELL);
+        grad.addColorStop(0, 'rgba(0,0,0,0)');
+        grad.addColorStop(1, g.trail.color);
+        ctx.fillStyle = grad;
+        ctx.fillRect(x * CELL + 4, y0 * CELL, CELL - 8, (y1 - y0) * CELL);
+      }
+      ctx.globalAlpha = 1;
+    }
+
     // just-locked piece: brief white highlight so hard drops read
     if (g.lockFlash) {
       const a = 0.6 * (1 - g.lockFlash.acc / LOCK_FLASH);
@@ -827,7 +924,7 @@ function mount(doc) {
   // -------------------------------------------------------------------------
   const KEYS = {
     ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'down',
-    ArrowUp: 'cw', KeyX: 'cw', KeyZ: 'ccw', ControlLeft: 'ccw',
+    ArrowUp: 'cw', KeyX: 'cw', KeyZ: 'ccw', ControlLeft: 'ccw', KeyA: 'flip',
     Space: 'hard', KeyC: 'hold', ShiftLeft: 'hold', ShiftRight: 'hold',
     KeyP: 'pause', Escape: 'pause',
   };
@@ -836,6 +933,7 @@ function mount(doc) {
     if (e.repeat) return;
     if (e.code === 'KeyR') {
       game = newGame();
+      publishSeed(game.state.seed);
       e.preventDefault();
       return;
     }
