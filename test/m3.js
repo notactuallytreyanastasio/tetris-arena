@@ -27,12 +27,14 @@ for (let y = H-4; y < H; y++) row(y, 'XXXXXXXXX.');
 setPiece(I, 1, 7, H-5); // vertical I in column 9? state 1 is column x+2 -> x=7
 hardDrop(); finishClear();
 const s1 = state.score;
-check('tetris scores 800 x1 (+drop)', s1 >= 800 && s1 < 900, String(s1));
+// 800 tetris + 2000 perfect clear (board is empty afterwards) + 2 for the one-row hard drop
+check('tetris 800 + perfect 2000 (+drop)', s1 === 2802, String(s1));
 check('b2b armed', state.b2b === true);
 for (let y = H-4; y < H; y++) row(y, 'XXXXXXXXX.');
 setPiece(I, 1, 7, H-5);
 hardDrop(); finishClear();
-check('b2b tetris 1200', state.score - s1 >= 1200 && state.score - s1 < 1300, String(state.score - s1));
+// b2b 1200 + perfect 2000 + combo 50 + drop 2
+check('b2b tetris 1200 + perfect + combo', state.score - s1 === 3252, String(state.score - s1));
 check('lines 8', state.lines === 8);
 
 // 3. T-spin double: 1200 pts (400*... no: TSD = 1200 x level)

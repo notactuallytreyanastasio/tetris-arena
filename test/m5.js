@@ -32,5 +32,16 @@ check('second clear adds 50 combo', state.combo === 1 && state.score - s1 === 10
 board.fill(0); setPiece(I, 0, 0, 1); hardDrop(); update(200);
 check('non-clear resets combo', state.combo === -1);
 
+// perfect clear: one full row, nothing else, cleared by an I -> 100 + 800 + drop
+reset(); board.fill(0);
+row(H-1, 'XXX....XXX'); setPiece(I, 0, 3, H-3);   // flat I fills the gap, nothing else left
+const sp = state.score; hardDrop(); update(200);
+check('perfect clear single = 900 + drop', state.score - sp === 900 + 2, String(state.score - sp));
+// not perfect when a cell remains
+reset(); board.fill(0);
+row(H-1, 'XXXXXXXXX.'); row(H-2, 'X.........'); setPiece(I, 1, 7, H-5);
+const sq = state.score; hardDrop(); update(200);
+check('no bonus with leftover cell', state.score - sq === 100 + 2, String(state.score - sq));
+
 console.log(fails ? `${fails} FAILURES` : 'ALL OK');
 process.exit(fails ? 1 : 0);

@@ -153,9 +153,10 @@ const LINES_PER_LEVEL = 10;
 
 // Guideline scoring, indexed by lines cleared. Multiplied by level.
 const SCORE = {
-  normal: [0, 100, 300, 500, 800],
-  tspin:  [400, 800, 1200, 1600],
-  mini:   [100, 200, 400],
+  normal:  [0, 100, 300, 500, 800],
+  tspin:   [400, 800, 1200, 1600],
+  mini:    [100, 200, 400],
+  perfect: [0, 800, 1200, 1800, 2000],   // board empty after the clear (from agent-8)
 };
 
 // Guideline gravity curve, ms per row. Level 1 = 1000ms, level 10 ~ 63ms.
@@ -391,8 +392,12 @@ function update(dt) {
   if (state.clearing) {
     state.clearing.t += dt;
     if (state.clearing.t >= CLEAR_FLASH) {
+      const n = state.clearing.rows.length;
       removeRows(state.clearing.rows);
       state.clearing = null;
+      // Perfect clear: checked after the collapse, on the whole array,
+      // so hidden rows count too.
+      if (board.every((v) => v === 0)) state.score += SCORE.perfect[n] * state.level;
       spawn();
     }
     return;
