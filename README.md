@@ -1,7 +1,7 @@
 # Tetris, agent-2
 
 Open `index.html`. Plain HTML, CSS and six JavaScript files, no build step.
-`node test.js` runs 78 checks against the engine and the input layer
+`node test.js` runs 80 checks against the engine and the input layer
 without a browser.
 
     ← →        move (held: DAS 167 ms, then ARR 33 ms)
