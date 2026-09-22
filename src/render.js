@@ -84,13 +84,13 @@
       this.els = els;
       // Last values written to the DOM; textContent only changes when a
       // value does (taken from agent-3).
-      this.shown = { score: -1, level: -1, lines: -1, toast: '', overlay: '' };
+      this.shown = { score: -1, level: -1, lines: -1, best: -1, toast: '', overlay: '' };
     }
 
-    draw(game, paused) {
+    draw(game, bestScore) {
       this.drawBoard(game);
       this.drawPanels(game);
-      this.drawHud(game, paused);
+      this.drawHud(game, bestScore || 0);
     }
 
     drawPanels(game) {
@@ -103,9 +103,10 @@
       if (game.hold) drawMini(h, game.hold, 0, game.holdUsed);
     }
 
-    drawHud(game, paused) {
+    drawHud(game, bestScore) {
       const els = this.els, shown = this.shown;
       if (shown.score !== game.score) els.score.textContent = shown.score = game.score;
+      if (shown.best !== bestScore) els.best.textContent = shown.best = bestScore;
       if (shown.level !== game.level) els.level.textContent = shown.level = game.level;
       if (shown.lines !== game.lines) els.lines.textContent = shown.lines = game.lines;
 
@@ -116,7 +117,7 @@
         els.toast.classList.toggle('show', !!toast);
       }
 
-      const overlay = game.over ? 'over' : paused ? 'paused' : '';
+      const overlay = game.over ? 'over' : game.paused ? 'paused' : '';
       if (shown.overlay !== overlay) {
         shown.overlay = overlay;
         els.overlay.classList.toggle('hidden', !overlay);

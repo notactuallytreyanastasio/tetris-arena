@@ -68,7 +68,14 @@
       this.kickIndex = 0;       // which kick test placed it (4 = the 5th)
       this.clearing = null;     // { rows, t } while the clear animation runs
       this.over = false;
+      this.paused = false;
       this.spawn();
+    }
+
+    setPaused(on) {
+      if (this.over) return;
+      this.paused = !!on;
+      if (this.paused) this.softDropping = false;
     }
 
     // ---- pieces ---------------------------------------------------------
@@ -139,8 +146,10 @@
 
     // ---- player actions -----------------------------------------------
 
+    // True while the player may act on a piece: not paused, not over, not
+    // mid line-clear. Every player action checks this one function.
     active() {
-      return this.piece && !this.over && !this.clearing;
+      return !!this.piece && !this.over && !this.paused && !this.clearing;
     }
 
     move(dx) {
@@ -338,7 +347,7 @@
         this.toast.t += dt;
         if (this.toast.t >= TOAST_MS) this.toast = null;
       }
-      if (this.over) return;
+      if (this.over || this.paused) return;
 
       if (this.clearing) {
         this.clearing.t += dt;
