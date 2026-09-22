@@ -217,10 +217,11 @@ function fakeTarget() {
   check('T 180 on the floor needs no kick', [g.rotate(2), g.piece.rot, g.lastRotation.kick], [true, 0, 0]);
   // Pointing up on the floor, a 180 puts the stem on the floor row: fits too.
   check('T 180 back on the floor', [g.rotate(2), g.piece.rot], [true, 2]);
-  // Wedge a vertical I between the wall and a column so a 180 must kick.
+  // A vertical I flush against the left wall (rot 1 at x=-2, column 0):
+  // rot 3 is column x+1 = -1, off the board, so the 180 must kick right.
   g = fresh(['I', 'I', 'I', 'I', 'I', 'I', 'I', 'I']);
-  g.rotate(1); while (g.move(1)) { /* column 9 */ }
-  check('I 180 from col 9 kicks left', [g.rotate(2), g.piece.rot, g.lastRotation.kick > 0], [true, 3, true]);
+  g.rotate(1); while (g.move(-1)) { /* column 0 */ }
+  check('I 180 at the left wall kicks right', [g.rotate(2), g.piece.rot, g.piece.x, g.lastRotation.kick], [true, 3, -1, 1]);
   // A 180 landing by its index-4 kick must not count as the full T-spin upgrade.
   g = fresh(['T', 'T', 'T', 'T', 'T', 'T', 'T', 'T']);
   g.piece = { type: 'T', rot: 0, x: 0, y: B - 3 }; g.lastRotation = { kick: 4, half: true };

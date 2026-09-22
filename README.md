@@ -1,7 +1,7 @@
 # Tetris, agent-2
 
 Open `index.html`. Plain HTML, CSS and six JavaScript files, no build step.
-`node test.js` runs 91 checks against the engine and the input layer
+`node test.js` runs 92 checks against the engine and the input layer
 without a browser. `test/browser.sh` runs 12 more inside headless Chrome,
 with real `KeyboardEvent`s, and prints the verdict.
 
