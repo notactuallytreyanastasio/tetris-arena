@@ -1,14 +1,16 @@
 # Tetris, agent-2
 
 Open `index.html`. Plain HTML, CSS and six JavaScript files, no build step.
-`node test.js` runs 80 checks against the engine and the input layer
-without a browser.
+`node test.js` runs 91 checks against the engine and the input layer
+without a browser. `test/browser.sh` runs 12 more inside headless Chrome,
+with real `KeyboardEvent`s, and prints the verdict.
 
     ← →        move (held: DAS 167 ms, then ARR 33 ms)
     ↑ / X      rotate clockwise        Z          rotate counter-clockwise
-    ↓          soft drop (20x gravity) Space      hard drop
-    C / Shift  hold                    P / Esc    pause (auto on blur/hide)
-    R          restart
+    A          rotate 180              Space      hard drop
+    ↓          soft drop (20x gravity) C / Shift  hold
+    P / Esc    pause (auto on blur/hide)
+    R          new game                Shift+R    replay the same seed
 
 ## Shape of the code
 
@@ -52,14 +54,17 @@ so its rotation is the identity and it needs no kick table at all.
 
 Kicks are the guideline JLSTZ and I tables flipped to y-down and keyed
 `"from>to"`. `rotate()` walks the five offsets for the transition and
-takes the first that fits, recording which kick it was.
+takes the first that fits, recording which kick it was. A 180 (`A`) uses
+the SRS+ table from TETR.IO, six offsets, the same for every piece, since
+the guideline has no 180 at all.
 
 T-spins use the three-corner rule: a T whose last successful action was a
 rotation, with at least three of the four diagonals round its centre
 solid (walls count). It is a full spin if both corners on the side the T
-points to are solid, or if it arrived by the fifth kick; otherwise a mini.
-`lastRotation` is set by `rotate()` and cleared by every successful move,
-gravity step or hard drop, so "last action" is exact.
+points to are solid, or if it arrived by the fifth kick of a quarter turn;
+otherwise a mini. A 180's fifth kick is a different offset and does not
+upgrade. `lastRotation` is set by `rotate()` and cleared by every
+successful move, gravity step or hard drop, so "last action" is exact.
 
 ### Timing
 
@@ -80,6 +85,13 @@ needs to know.
   higher if that is blocked. Both blocked, or a piece locking entirely in
   the hidden rows, ends the game.
 
+### Randomiser and replay
+
+7-bag, dealt from a seeded mulberry32 PRNG. The seed is shown under the
+score and kept in the URL hash, so reloading, or sending the link, plays
+the same bag order. Shift+R restarts with the same seed. `new Game(seed)`
+is what the tests use to get a known sequence.
+
 ### Input
 
 Held horizontal directions live on a stack. The newest press repeats;
@@ -94,7 +106,9 @@ Guideline: 100/300/500/800 x level for 1 to 4 lines; T-spin 400/800/1200/
 1600, mini 100/200/400; back-to-back tetris or T-spin at 1.5x; combo
 50 x combo x level; perfect clear 800/1200/1800/2000 on top; +1 per
 soft-dropped row, +2 per hard-dropped row. Level is 1 + lines/10. The last
-scoring event fades in under the score.
+scoring event fades in under the score. The best score in this browser is
+kept in `localStorage`, saved at game over and on unload; every access is
+guarded because private windows throw.
 
 ## What I took from whom
 
@@ -120,6 +134,16 @@ deciduous workspace, linked to the action that used it.
 - **agent-1 and agent-6**: the held-direction stack for DAS; agent-1 took
   the fallback from agent-3, agent-6 kept the fallback DAS-charged. Mine
   moves on the fallback immediately.
+- **agent-8, refined by agent-6**: 180 rotation with the SRS+ kick table.
+  agent-6 pointed out that a 180's index-4 kick must not claim the full
+  T-spin upgrade; `lastRotation.half` carries that.
+- **agent-1**: the seeded bag with Shift+R replay and the seed in the hash.
+- **agent-10**: best score in `localStorage`.
+- **agent-3, agent-4, agent-9**: the browser probe. Under
+  `--virtual-time-budget` requestAnimationFrame fires once at most, so
+  `test/probe.html` skips the loop, drives `update()` by hand with the real
+  input layer attached to `window`, dispatches real `KeyboardEvent`s, and
+  writes the verdict into `document.title` for `--dump-dom`.
 
 Things I had first, as far as the graph shows: the line-clear flash with
 `fullRows`/`removeRows` split so the game can hold full rows on screen;
@@ -129,6 +153,6 @@ the combo counter; the fading score-event line.
 
 - No touch controls; keyboard only.
 - No sound.
-- Headless Chrome does not advance `requestAnimationFrame` under
-  `--virtual-time-budget`, so screenshots only ever verified rendering,
-  never motion. Motion is verified by `test.js` and by playing it.
+- The frame loop itself is not covered by the browser probe, because
+  headless Chrome does not advance `requestAnimationFrame` under a virtual
+  time budget. Everything the loop calls is.

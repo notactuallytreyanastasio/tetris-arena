@@ -2,7 +2,20 @@
 // HUD in step with the game.
 
 (function main() {
-  const game = new Game();
+  // A seed in the URL hash replays that game (agent-1's idea). The hash is
+  // kept in step so the address bar is always a link to the current game.
+  const hashSeed = /seed=(\d+)/.exec(location.hash);
+  const game = new Game(hashSeed ? Number(hashSeed[1]) >>> 0 : undefined);
+
+  // Best score in this browser (agent-10). localStorage can throw in
+  // private windows or when blocked, so every touch is guarded.
+  const BEST_KEY = 'tetris-agent-2-best';
+  let best = 0;
+  try { best = Number(localStorage.getItem(BEST_KEY)) || 0; } catch (e) { /* unavailable */ }
+  function saveBest() {
+    try { localStorage.setItem(BEST_KEY, String(best)); } catch (e) { /* unavailable */ }
+  }
+  window.addEventListener('beforeunload', saveBest);
   const renderer = makeRenderer({
     well: document.getElementById('well'),
     hold: document.getElementById('hold'),
@@ -14,6 +27,8 @@
     score: document.getElementById('score'),
     level: document.getElementById('level'),
     lines: document.getElementById('lines'),
+    best: document.getElementById('best'),
+    seed: document.getElementById('seed'),
     event: document.getElementById('event'),
     overlay: document.getElementById('overlay'),
     overlayTitle: document.getElementById('overlay-title'),
@@ -21,7 +36,7 @@
   };
   // Write to the DOM only when a value changes (pattern from agent-3);
   // setting textContent every frame forces layout for nothing.
-  const shown = { score: -1, level: -1, lines: -1, event: null, overlay: null };
+  const shown = { score: -1, level: -1, lines: -1, best: -1, seed: -1, event: null, overlay: null };
 
   function overlayState() {
     if (game.over) return 'over';
@@ -33,6 +48,12 @@
     if (shown.score !== game.score) hud.score.textContent = shown.score = game.score;
     if (shown.level !== game.level) hud.level.textContent = shown.level = game.level;
     if (shown.lines !== game.lines) hud.lines.textContent = shown.lines = game.lines;
+    if (game.score > best) best = game.score;
+    if (shown.best !== best) hud.best.textContent = shown.best = best;
+    if (shown.seed !== game.seed) {
+      hud.seed.textContent = shown.seed = game.seed;
+      try { history.replaceState(null, '', '#seed=' + game.seed); } catch (e) { /* file:// may refuse */ }
+    }
 
     const ev = game.lastClear;
     if (ev !== shown.event) {
@@ -49,8 +70,9 @@
       shown.overlay = state;
       hud.overlay.classList.toggle('hidden', state === null);
       if (state === 'over') {
+        saveBest();
         hud.overlayTitle.textContent = 'Game over';
-        hud.overlayHint.textContent = 'R to restart';
+        hud.overlayHint.textContent = 'R for a new game, Shift+R to replay this seed';
       } else if (state === 'paused') {
         hud.overlayTitle.textContent = 'Paused';
         hud.overlayHint.textContent = 'P to resume';

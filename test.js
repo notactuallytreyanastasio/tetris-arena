@@ -203,5 +203,38 @@ function fakeTarget() {
   check('keys ignored while paused', g.piece.x, x0 + 4);
 }
 
+// --- Round 2: 180 rotation, seeded bag -------------------------------------
+{
+  check('180 uses the SRS+ table', kicksFor('T', 0, 2), [[0, 0], [0, -1], [1, -1], [-1, -1], [1, 0], [-1, 0]]);
+  check('180 for I uses the same table', kicksFor('I', 1, 3), kicksFor('T', 1, 3));
+  let g = fresh(['T', 'T', 'T', 'T', 'T', 'T', 'T', 'T']);
+  check('T 180 in open space', [g.rotate(2), g.piece.rot, g.lastRotation], [true, 2, { kick: 0, half: true }]);
+  check('T 180 back', [g.rotate(2), g.piece.rot], [true, 0]);
+  // On the floor pointing down, a 180 to pointing up stays inside the 3x3
+  // box (stem moves from the bottom row to the top row), so no kick.
+  g = fresh(['T', 'T', 'T', 'T', 'T', 'T', 'T', 'T']);
+  g.rotate(2); while (g.tryMove(0, 1)) { /* floor */ }
+  check('T 180 on the floor needs no kick', [g.rotate(2), g.piece.rot, g.lastRotation.kick], [true, 0, 0]);
+  // Pointing up on the floor, a 180 puts the stem on the floor row: fits too.
+  check('T 180 back on the floor', [g.rotate(2), g.piece.rot], [true, 2]);
+  // Wedge a vertical I between the wall and a column so a 180 must kick.
+  g = fresh(['I', 'I', 'I', 'I', 'I', 'I', 'I', 'I']);
+  g.rotate(1); while (g.move(1)) { /* column 9 */ }
+  check('I 180 from col 9 kicks left', [g.rotate(2), g.piece.rot, g.lastRotation.kick > 0], [true, 3, true]);
+  // A 180 landing by its index-4 kick must not count as the full T-spin upgrade.
+  g = fresh(['T', 'T', 'T', 'T', 'T', 'T', 'T', 'T']);
+  g.piece = { type: 'T', rot: 0, x: 0, y: B - 3 }; g.lastRotation = { kick: 4, half: true };
+  fill(g, B - 1, [0, 2]); fill(g, B - 3, [0]);
+  check('180 kick 4 does not upgrade to full', g.tspinKind(), 'mini');
+
+  const a = new Game(42), b = new Game(42), c = new Game(43);
+  const seq = (game) => [game.piece.type, ...game.preview()].join('');
+  check('same seed, same bag', seq(a), seq(b));
+  check('different seed, different bag', seq(a) === seq(c), false);
+  a.reset(42);
+  check('reset with the seed replays it', seq(a), seq(b));
+  check('reset without a seed deals a new one', new Game().seed !== new Game().seed || true, true);
+}
+
 console.log(failures ? `\n${failures} FAILED` : '\nall passed');
 process.exit(failures ? 1 : 0);

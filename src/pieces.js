@@ -104,11 +104,21 @@ const KICKS_I = {
   '3>0': [[0, 0], [1, 0], [-2, 0], [1, 2], [-2, -1]],
   '0>3': [[0, 0], [-1, 0], [2, 0], [-1, -2], [2, 1]],
 };
+// 180-degree kicks. Guideline SRS has no 180; this is TETR.IO's SRS+ table
+// (via agent-8), one table for every piece, flipped to y-down like the rest.
+const KICKS_180 = {
+  '0>2': [[0, 0], [0, -1], [1, -1], [-1, -1], [1, 0], [-1, 0]],
+  '2>0': [[0, 0], [0, 1], [-1, 1], [1, 1], [-1, 0], [1, 0]],
+  '1>3': [[0, 0], [1, 0], [1, -2], [1, -1], [0, -2], [0, -1]],
+  '3>1': [[0, 0], [-1, 0], [-1, -2], [-1, -1], [0, -2], [0, -1]],
+};
 // O lives in a 2x2 box here, so every rotation is the identity and no kick
 // is ever needed.
 const KICKS_O = [[0, 0]];
 
 function kicksFor(type, from, to) {
   if (type === 'O') return KICKS_O;
-  return (type === 'I' ? KICKS_I : KICKS_JLSTZ)[`${from}>${to}`];
+  const key = `${from}>${to}`;
+  if ((to - from + 4) % 4 === 2) return KICKS_180[key];
+  return (type === 'I' ? KICKS_I : KICKS_JLSTZ)[key];
 }

@@ -28,22 +28,39 @@ function gravityMs(level) {
   return Math.pow(0.8 - l * 0.007, l) * 1000;
 }
 
+// Seeded PRNG (mulberry32, via agent-1) so a game can be replayed: the same
+// seed gives the same bag order, and the seed is small enough to share.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 // 7-bag randomiser: every piece appears once per bag, so droughts are bounded.
-function makeBag() {
+function makeBag(rng) {
   const bag = PIECE_TYPES.slice();
   for (let i = bag.length - 1; i > 0; i--) {
-    const j = Math.floor(Math.random() * (i + 1));
+    const j = Math.floor(rng() * (i + 1));
     [bag[i], bag[j]] = [bag[j], bag[i]];
   }
   return bag;
 }
 
 class Game {
-  constructor() {
-    this.reset();
+  constructor(seed) {
+    this.reset(seed);
   }
 
-  reset() {
+  // seed: a number to replay a known bag order, or undefined for a fresh one.
+  reset(seed) {
+    if (seed === undefined) seed = (Date.now() ^ Math.floor(Math.random() * 0xffffffff)) >>> 0;
+    this.seed = seed;
+    this.rng = mulberry32(seed);
     this.board = makeBoard();
     this.queue = [];
     this.piece = null;
@@ -75,12 +92,12 @@ class Game {
   }
 
   nextType() {
-    if (this.queue.length < NEXT_PREVIEW + 1) this.queue.push(...makeBag());
+    if (this.queue.length < NEXT_PREVIEW + 1) this.queue.push(...makeBag(this.rng));
     return this.queue.shift();
   }
 
   preview() {
-    while (this.queue.length < NEXT_PREVIEW) this.queue.push(...makeBag());
+    while (this.queue.length < NEXT_PREVIEW) this.queue.push(...makeBag(this.rng));
     return this.queue.slice(0, NEXT_PREVIEW);
   }
 
@@ -157,8 +174,8 @@ class Game {
     return ok;
   }
 
-  // dir = +1 clockwise, -1 counter-clockwise. Walk the SRS kick list for
-  // this transition; the first offset that fits is the rotation.
+  // dir = +1 clockwise, -1 counter-clockwise, 2 for a 180. Walk the kick
+  // list for this transition; the first offset that fits is the rotation.
   rotate(dir) {
     if (!this.piece || this.over || this.paused) return false;
     const from = this.piece.rot;
@@ -167,7 +184,7 @@ class Game {
     for (let i = 0; i < kicks.length; i++) {
       const [kx, ky] = kicks[i];
       if (this.tryMove(kx, ky, dir)) {
-        this.lastRotation = { kick: i };
+        this.lastRotation = { kick: i, half: dir === 2 };
         this.playerMoved();
         return true;
       }
@@ -207,8 +224,9 @@ class Game {
   // a T whose last successful action was a rotation, with at least three of
   // the four diagonals around its centre solid, was spun in. It is a full
   // T-spin if both corners on the side the T points to are solid, or if it
-  // arrived by the last (index 4) kick; otherwise a mini. Walls count as
-  // solid. Returns null, 'mini' or 'full'.
+  // arrived by the last (index 4) kick of a quarter turn; otherwise a mini.
+  // A 180 has six kicks and its index 4 is not the guideline upgrade case
+  // (agent-6's point). Walls count as solid. Returns null, 'mini' or 'full'.
   tspinKind() {
     const p = this.piece;
     if (p.type !== 'T' || !this.lastRotation) return null;
@@ -218,7 +236,8 @@ class Game {
     const bl = solid(cx - 1, cy + 1), br = solid(cx + 1, cy + 1);
     if (tl + tr + bl + br < 3) return null;
     const front = [[tl, tr], [tr, br], [bl, br], [tl, bl]][p.rot];
-    return (front[0] && front[1]) || this.lastRotation.kick === 4 ? 'full' : 'mini';
+    const upgrade = this.lastRotation.kick === 4 && !this.lastRotation.half;
+    return (front[0] && front[1]) || upgrade ? 'full' : 'mini';
   }
 
   // Lock out (from agent-1): a piece that settles entirely inside the hidden

@@ -13,6 +13,7 @@ const KEYS = {
   ArrowLeft: 'left', ArrowRight: 'right', ArrowDown: 'soft',
   ArrowUp: 'cw', x: 'cw', X: 'cw',
   z: 'ccw', Z: 'ccw',
+  a: 'half', A: 'half',
   ' ': 'hard',
   c: 'hold', C: 'hold', Shift: 'hold',
   p: 'pause', P: 'pause', Escape: 'pause',
@@ -58,7 +59,8 @@ function attachInput(game, win = window, doc = document) {
     if (e.repeat) return; // we do our own repeat
 
     if (action === 'pause') { game.setPaused(!game.paused); return; }
-    if (action === 'reset') { game.reset(); return; }
+    // Shift+R replays the same seed (agent-1); plain R deals a new one.
+    if (action === 'reset') { game.reset(e.shiftKey ? game.seed : undefined); return; }
     if (game.paused) return;
 
     switch (action) {
@@ -67,6 +69,7 @@ function attachInput(game, win = window, doc = document) {
       case 'soft': game.softDropping = true; break;
       case 'cw': game.rotate(1); break;
       case 'ccw': game.rotate(-1); break;
+      case 'half': game.rotate(2); break;
       case 'hard': game.hardDrop(); break;
       case 'hold': game.holdPiece(); break;
     }
