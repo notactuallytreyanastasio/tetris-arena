@@ -1,10 +1,16 @@
 // Wire-up: one requestAnimationFrame loop feeding update(dt) and draw().
 
 (() => {
-  const game = new Game();
+  // Seed from the URL hash so a game can be shared and replayed.
+  const hashSeed = parseInt(location.hash.slice(1), 10);
+  const game = new Game(Number.isFinite(hashSeed) ? hashSeed : undefined);
   const input = new Input(game);
   input.attach(window);
   const boardCtx = document.getElementById('board').getContext('2d');
+  const holdCtx = document.getElementById('hold').getContext('2d');
+  const nextCtx = document.getElementById('next').getContext('2d');
+  const holdBox = document.getElementById('hold-box');
+  const seedEl = document.getElementById('seed');
   const overlay = document.getElementById('overlay');
   const overlayTitle = document.getElementById('overlay-title');
   const overlayHint = document.getElementById('overlay-hint');
@@ -21,8 +27,26 @@
   }
 
   let shownClear = null;
+  let shownHold = '', shownQueue = '', shownSeed = null;
   function draw() {
     Render.board(boardCtx, game);
+    // Previews are redrawn only when their contents change.
+    const holdKey = (game.hold || '') + (game.holdUsed ? '!' : '');
+    if (holdKey !== shownHold) {
+      shownHold = holdKey;
+      Render.preview(holdCtx, [game.hold], 120, 24, game.holdUsed);
+      holdBox.classList.toggle('spent', game.holdUsed);
+    }
+    const queueKey = game.queue.slice(0, 5).join('');
+    if (queueKey !== shownQueue) {
+      shownQueue = queueKey;
+      Render.preview(nextCtx, game.queue.slice(0, 5), 72, 20);
+    }
+    if (game.seed !== shownSeed) {
+      shownSeed = game.seed;
+      seedEl.textContent = game.seed;
+      history.replaceState(null, '', '#' + game.seed);
+    }
     setText(hud.score, game.score);
     setText(hud.level, game.level);
     setText(hud.lines, game.lines);

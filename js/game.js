@@ -6,7 +6,21 @@ const LOCK_DELAY = 500;   // ms a grounded piece waits before locking
 const LOCK_RESETS = 15;   // move/rotate resets allowed per lowest row reached
 const SOFT_DROP_MS = 40;  // ms per row while soft dropping (floor; never slower than gravity)
 const CLEAR_FLASH = 150;  // ms full rows stay lit before they collapse
+const TRAIL_MS = 120;     // ms the hard-drop trail lingers
+const QUEUE_DEPTH = 5;    // a 7-bag makes about five pieces plannable
 const LINES_PER_LEVEL = 10;
+
+// mulberry32: a tiny seeded PRNG so a game can be replayed from its seed.
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6D2B79F5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
 
 const SCORE = {
   clear:   [0, 100, 300, 500, 800],   // x level
@@ -22,12 +36,18 @@ const SCORE = {
 const CLEAR_NAMES = ['', 'SINGLE', 'DOUBLE', 'TRIPLE', 'TETRIS'];
 
 class Game {
-  constructor() { this.reset(); }
+  constructor(seed) { this.reset(seed); }
 
-  reset() {
+  reset(seed = Game.randomSeed()) {
+    this.seed = seed >>> 0;
+    this.rng = mulberry32(this.seed);
     this.board = new Board();
     this.bag = [];
+    this.queue = [];          // upcoming piece types, QUEUE_DEPTH long
+    this.hold = null;         // parked piece type
+    this.holdUsed = false;    // hold is allowed once per piece
     this.active = null;       // { type, rot, x, y, spin, kick }
+    this.dropTrail = null;    // { type, cells, x, y0, y1, t } after a hard drop
     this.score = 0;
     this.lines = 0;
     this.level = 1;
@@ -45,6 +65,8 @@ class Game {
     this.spawn();
   }
 
+  static randomSeed() { return (Math.random() * 0x100000000) >>> 0; }
+
   // Guideline gravity: seconds per row = (0.8 - (level-1)*0.007)^(level-1).
   // Level 1 is one row per second; level 10 is about ten rows per second.
   gravityMs() {
@@ -53,19 +75,24 @@ class Game {
   }
 
   // 7-bag randomiser: every piece once per bag, so droughts are bounded.
-  nextType() {
+  fromBag() {
     if (this.bag.length === 0) {
       this.bag = PIECES.TYPES.slice();
       for (let i = this.bag.length - 1; i > 0; i--) {
-        const j = Math.floor(Math.random() * (i + 1));
+        const j = Math.floor(this.rng() * (i + 1));
         [this.bag[i], this.bag[j]] = [this.bag[j], this.bag[i]];
       }
     }
     return this.bag.pop();
   }
 
-  spawn() {
-    const type = this.nextType();
+  // Head of the preview queue; the queue is refilled from the bag.
+  nextType() {
+    while (this.queue.length <= QUEUE_DEPTH) this.queue.push(this.fromBag());
+    return this.queue.shift();
+  }
+
+  spawn(type = this.nextType()) {
     // Box top-left two rows above the visible area, so the piece's bottom
     // row is the last hidden row; one free step down puts it in view.
     const p = { type, rot: 0, x: 3, y: Board.HIDDEN - 2, spin: false, kick: -1 };
@@ -81,6 +108,25 @@ class Game {
     this.lockAcc = 0;
     this.lockResets = 0;
     this.lowestY = p.y;
+  }
+
+  // Park the active piece and bring out the parked one (or the next piece
+  // if nothing is parked). Once per piece: holdUsed clears at the next lock.
+  holdPiece() {
+    if (!this.accepting || this.holdUsed) return false;
+    const parked = this.hold;
+    this.hold = this.active.type;
+    this.holdUsed = true;
+    this.spawn(parked || undefined);
+    return true;
+  }
+
+  // Row the active piece would land on if hard-dropped.
+  ghostY() {
+    const p = this.active;
+    let y = p.y;
+    while (this.fits(p, 0, y - p.y + 1)) y++;
+    return y;
   }
 
   cells(p = this.active) { return PIECES.cells(p.type, p.rot); }
@@ -147,9 +193,12 @@ class Game {
 
   hardDrop() {
     if (!this.accepting) return;
+    const p = this.active;
+    const y0 = p.y;
     let rows = 0;
     while (this.descend()) rows++;
     this.score += rows * SCORE.hard;
+    if (rows > 0) this.dropTrail = { type: p.type, cells: this.cells(p), x: p.x, y0, y1: p.y, t: 0 };
     this.lock();
   }
 
@@ -183,6 +232,7 @@ class Game {
     const rows = this.board.fullRows();
     this.scoreLock(rows.length, spin);
     this.active = null;
+    this.holdUsed = false;
     if (rows.length) {
       this.clearing = { rows, t: 0 };   // update() collapses after the flash
     } else {
@@ -233,6 +283,11 @@ class Game {
 
   update(dt) {
     if (this.over) return;
+
+    if (this.dropTrail) {
+      this.dropTrail.t += dt;
+      if (this.dropTrail.t >= TRAIL_MS) this.dropTrail = null;
+    }
 
     if (this.clearing) {
       this.clearing.t += dt;

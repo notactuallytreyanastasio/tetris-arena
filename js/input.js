@@ -58,7 +58,8 @@ class Input {
       case 'ArrowUp': case 'KeyX': g.rotate(1); break;
       case 'KeyZ': g.rotate(-1); break;
       case 'Space': g.hardDrop(); break;
-      case 'KeyR': g.reset(); break;
+      case 'KeyC': case 'ShiftLeft': case 'ShiftRight': g.holdPiece(); break;
+      case 'KeyR': g.reset(e.shiftKey ? g.seed : undefined); break;   // Shift+R replays the same seed
       default: return;
     }
     e.preventDefault();
@@ -75,7 +76,7 @@ class Input {
   }
 
   handles(code) {
-    return ['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'KeyX', 'KeyZ', 'Space', 'KeyR'].includes(code);
+    return ['ArrowLeft', 'ArrowRight', 'ArrowDown', 'ArrowUp', 'KeyX', 'KeyZ', 'Space', 'KeyR', 'KeyC', 'ShiftLeft', 'ShiftRight'].includes(code);
   }
 }
 

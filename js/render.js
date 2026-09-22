@@ -41,14 +41,79 @@ const Render = (() => {
       }
     }
 
+    // Hard-drop trail: a fading streak down each column the piece fell through.
+    const tr = game.dropTrail;
+    if (tr) {
+      const alpha = 0.35 * (1 - tr.t / TRAIL_MS);
+      const cols = new Map();   // column -> [topmost dy, bottom dy]
+      for (const [dx, dy] of tr.cells) {
+        const c = cols.get(dx);
+        cols.set(dx, c ? [Math.min(c[0], dy), Math.max(c[1], dy)] : [dy, dy]);
+      }
+      for (const [dx, [top, bottom]] of cols) {
+        const yStart = tr.y0 + top - Board.HIDDEN;
+        const yEnd = tr.y1 + bottom - Board.HIDDEN;   // last row the trail covers
+        const grad = ctx.createLinearGradient(0, yStart * CELL, 0, (yEnd + 1) * CELL);
+        grad.addColorStop(0, 'rgba(255,255,255,0)');
+        grad.addColorStop(1, PIECES.COLORS[tr.type]);
+        ctx.globalAlpha = alpha;
+        ctx.fillStyle = grad;
+        ctx.fillRect((tr.x + dx) * CELL, Math.max(0, yStart) * CELL, CELL, (yEnd + 1 - Math.max(0, yStart)) * CELL);
+        ctx.globalAlpha = 1;
+      }
+    }
+
     const p = game.active;
     if (p) {
+      // Ghost: outline where the piece would land. Outline, not fill,
+      // because a filled ghost blends into the stack.
+      const gy = game.ghostY();
+      if (gy !== p.y) {
+        ctx.strokeStyle = PIECES.COLORS[p.type];
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = 0.45;
+        for (const [dx, dy] of game.cells(p)) {
+          const y = gy + dy - Board.HIDDEN;
+          if (y >= 0) ctx.strokeRect((p.x + dx) * CELL + 2, y * CELL + 2, CELL - 4, CELL - 4);
+        }
+        ctx.globalAlpha = 1;
+      }
+      // Lock pulse: a grounded piece whitens as its lock timer runs out.
+      const pulse = gy === p.y ? Math.min(game.lockAcc / LOCK_DELAY, 1) : 0;
       for (const [dx, dy] of game.cells(p)) {
         const y = p.y + dy - Board.HIDDEN;
-        if (y >= 0) cell(ctx, p.x + dx, y, PIECES.COLORS[p.type]);
+        if (y < 0) continue;
+        cell(ctx, p.x + dx, y, PIECES.COLORS[p.type]);
+        if (pulse > 0) {
+          ctx.fillStyle = `rgba(255,255,255,${0.55 * pulse})`;
+          ctx.fillRect((p.x + dx) * CELL, y * CELL, CELL, CELL);
+        }
       }
     }
   }
 
-  return { CELL, board, cell };
+  // Draw a list of piece types stacked in slots on a preview canvas, each
+  // centred in its slot. `types` may contain null for an empty slot.
+  function preview(ctx, types, slotH, size, dim = false) {
+    const W = ctx.canvas.width;
+    ctx.fillStyle = BG;
+    ctx.fillRect(0, 0, W, ctx.canvas.height);
+    ctx.globalAlpha = dim ? 0.3 : 1;
+    types.forEach((type, slot) => {
+      if (!type) return;
+      const cells = PIECES.cells(type, 0);
+      const xs = cells.map(c => c[0]), ys = cells.map(c => c[1]);
+      const minX = Math.min(...xs), maxX = Math.max(...xs);
+      const minY = Math.min(...ys), maxY = Math.max(...ys);
+      const ox = (W - (maxX - minX + 1) * size) / 2 - minX * size;
+      const oy = slot * slotH + (slotH - (maxY - minY + 1) * size) / 2 - minY * size;
+      ctx.save();
+      ctx.translate(ox, oy);
+      for (const [dx, dy] of cells) cell(ctx, dx, dy, PIECES.COLORS[type], size);
+      ctx.restore();
+    });
+    ctx.globalAlpha = 1;
+  }
+
+  return { CELL, board, cell, preview };
 })();

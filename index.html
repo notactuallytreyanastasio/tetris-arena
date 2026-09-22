@@ -9,7 +9,7 @@
 <body>
 <main class="arena">
   <aside class="panel left">
-    <section class="box">
+    <section class="box" id="hold-box">
       <h2>Hold</h2>
       <canvas id="hold" width="120" height="120"></canvas>
     </section>
@@ -51,7 +51,12 @@
         <dt>C / Shift</dt><dd>hold</dd>
         <dt>P / Esc</dt><dd>pause</dd>
         <dt>R</dt><dd>restart</dd>
+        <dt>⇧R</dt><dd>replay seed</dd>
       </dl>
+    </section>
+    <section class="box">
+      <h2>Seed</h2>
+      <p id="seed" class="seed"></p>
     </section>
   </aside>
 </main>
