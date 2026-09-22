@@ -20,7 +20,33 @@ graph held 386 nodes and every one of the ten branches had a playable game
 with a passing test suite. This post is the story of how the tooling got
 there, what the agents did with it, and what broke.
 
-![Every node in the arena, by agent and minute. Pink arcs are observations that name the agent they took from.](fig-lanes.svg)
+Every node in the arena, by agent and minute:
+
+```
+minute    0    0    1    1    2    2 
+          0    5    0    5    0    5 
+agent-1   OO...o*...o*...o*..o*.oo...
+agent-2   Oo..oo*o.*...*o..*...o..*o*
+agent-3   Oo.o.*o*..*..*o.......*o*.o
+agent-4   Oo..o*.o*.o*...o*...o.*..o*
+agent-5   OO.o*.*o.*Oo*.Ooo*....o.**.
+agent-6   Oo.o*.o*.o*.o*..*.o...*oo*o
+agent-7   Oo.....o*.**.....o*..*...oo
+agent-8   Oo....O*o*..o*..*..o..*.o*.
+agent-9   Oo...o*..o*...o*..*..o*..o*
+agent-10  OO.O..o*.o*...o*..oo..*.o*.
+
+.  nothing logged that minute
+o  one or two nodes
+O  three or more
+*  an observation that names the agent it took from
+```
+
+The first column is minute one: every agent logged its goal and first
+decisions before anyone had anything to read. The stars start at minute
+five, when milestone one was done and the rules said to look. (The same
+figure with one dot per node, and the borrows drawn as arcs, is
+[fig-lanes.svg](fig-lanes.svg).)
 
 ## The tool underneath
 
@@ -170,7 +196,30 @@ inside the bounding box. Before switching, agent-9 ran a Node script to
 confirm the derivation reproduced all 21 non-spawn states, and only then
 deleted its tables.
 
-![Who took from whom. Rows are the borrower, columns the source.](fig-borrows.svg)
+Who took from whom. Rows are the borrower, columns the source, counted
+from the agents named in observation titles:
+
+```
+took from:      1   2   3   4   5   6   7   8   9  10   total
+             ----------------------------------------   -----
+agent-1         .   1   4   .   3   .   .   1   .   1      10
+agent-2         4   .   5   2   2   2   2   3   2   1      23
+agent-3         4   1   .   3   2   3   .   1   2   .      16
+agent-4         4   .   5   .   4   5   .   2   .   2      22
+agent-5         2   1   2   2   .   .   3   1   1   1      13
+agent-6         3   2   2   .   3   .   1   3   2   1      17
+agent-7         1   1   5   1   2   2   .   4   1   .      17
+agent-8         2   2   3   2   4   3   .   .   1   1      18
+agent-9         2   1   4   1   3   1   .   2   .   1      15
+agent-10        2   3   4   2   3   1   2   1   1   .      19
+             ----------------------------------------
+cited          24  12  34  13  26  17   8  18  10   8
+```
+
+Nobody is on their own diagonal, and nobody is missing from a column:
+every agent was taken from at least eight times. Agent-3 wrote a single
+1,161-line file and got cited 34 times; agent-7, with the most decisions
+logged, got cited eight. Agents read code more than they read decisions.
 
 ## The numbers at 05:05 UTC
 
@@ -201,22 +250,25 @@ added seeded replays, a hard-drop trail and SRS+ 180 rotation, all of which
 started on one branch and were taken by the others within minutes. Agent-8
 logged its last outcome at 05:04 as "arena converged, stopping here."
 
-The ten games, rendered headless from each branch's `index.html`. These
-prove the page loads and draws; they do not prove motion, for a reason
-below.
+The ten games, as they stood at the snapshot. Lines are the game without
+tests. "Checks" is what each agent's own runner reports.
 
-<div class="gallery">
-<figure><img src="img/agent-1.png" alt="agent-1"><figcaption>agent-1</figcaption></figure>
-<figure><img src="img/agent-2.png" alt="agent-2"><figcaption>agent-2</figcaption></figure>
-<figure><img src="img/agent-3.png" alt="agent-3"><figcaption>agent-3</figcaption></figure>
-<figure><img src="img/agent-4.png" alt="agent-4"><figcaption>agent-4</figcaption></figure>
-<figure><img src="img/agent-5.png" alt="agent-5"><figcaption>agent-5</figcaption></figure>
-<figure><img src="img/agent-6.png" alt="agent-6"><figcaption>agent-6</figcaption></figure>
-<figure><img src="img/agent-7.png" alt="agent-7"><figcaption>agent-7</figcaption></figure>
-<figure><img src="img/agent-8.png" alt="agent-8"><figcaption>agent-8</figcaption></figure>
-<figure><img src="img/agent-9.png" alt="agent-9"><figcaption>agent-9</figcaption></figure>
-<figure><img src="img/agent-10.png" alt="agent-10"><figcaption>agent-10</figcaption></figure>
-</div>
+| Agent | Shape | Lines | Checks | What it did that the others took |
+|---|---|---|---|---|
+| 1 | `tetris.js`, one file | 925 | 6 probe files | Generated rotation states from the spawn shape; seeded, replayable 7-bag |
+| 2 | `src/`, six scripts | 1084 | 97 + 12 in Chrome | DOM HUD with fading score events; the real-browser motion probe |
+| 3 | `tetris.js`, one file | 1161 | 63 | Four hidden rows; DAS/ARR held-key model; tests shipped in the repo; the most cited branch |
+| 4 | `js/`, six classic script tags | 980 | 95 | Found the silent cell drop in `merge()`; headless Chrome verification |
+| 5 | `tetris.js`, one file | 817 | passes | Three-corner T-spin with the fifth-kick upgrade; lock-delay pulse; outline ghost |
+| 6 | `tetris.js`, core and `mount()` split | 941 | 36 | DOM-free core; the rule that a 180 never claims the T-spin upgrade |
+| 7 | `js/`, six scripts | 976 | 77 | Keyed kick-table format; implemented step reset from agent-8's decision before agent-8 did |
+| 8 | `js/`, seven scripts | 1171 | 92 | SRS+ 180 rotation, first in the arena; five-deep queue; "arena converged, stopping here" |
+| 9 | `src/`, six scripts | 1203 | 69 | Verified agent-1's derivation before taking it; harness generated from `index.html` |
+| 10 | `game.js`, one closure | 903 | 135 | Best score in localStorage; DAS carried through the clear flash; the largest test suite |
+
+Headless frames of each game are in the repository under `docs/img/`, one
+per branch. They show that each page loads and draws its first frame; they
+cannot show motion, for a reason below.
 
 ## What did not work
 
@@ -240,7 +292,7 @@ event payload carries `node_type`, so the information was there; the
 watcher was summarising from a tally it kept rather than from the events it
 received.
 
-The screenshots above do not prove the games run. `requestAnimationFrame`
+The screenshots in the repository do not prove the games run. `requestAnimationFrame`
 does not advance under headless Chrome's virtual time budget, so a
 screenshot shows the first frame and nothing after it. Agent-2 wrote this
 down at 04:56, had a real-browser probe by 05:03, and agent-10 took it a
