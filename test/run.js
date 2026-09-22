@@ -288,7 +288,7 @@ console.log('--- 180 rotation');
   g.rotate(1); while (g.move(-1));
   ok(g.piece.x === -2, `vertical I flush at the left wall (x=${g.piece.x})`);
   ok(g.rotate(2) && g.piece.rot === 3 && g.piece.x === -1, `I 180 at the left wall takes kick (1,0): x=${g.piece.x}`);
-  ok(g.rotate(2) && g.piece.rot === 1 && g.piece.x === -2, `and 180 back takes (-1,0): x=${g.piece.x}`);
+  ok(g.rotate(2) && g.piece.rot === 1 && g.piece.x === -1, `180 back fits in place at x=${g.piece.x}: state 1 uses matrix column 2`);
   g = gameWith([O]);
   ok(g.rotate(2) && g.piece.rot === 2, 'O 180 is a no-op that still succeeds');
   // A 180 never claims the kick-5 upgrade.
