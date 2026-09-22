@@ -7,11 +7,17 @@
 // Browser key repeat (e.repeat) is ignored entirely.
 //
 // Rotation, hard drop, hold, pause and restart are one-shot on keydown.
+//
+// Touch: pointer events on the field. Drag sideways moves one cell per
+// cell-width dragged, drag down soft-drops, a quick flick down hard-drops,
+// a tap rotates clockwise. Tapping the hold panel holds.
 (function (root) {
   'use strict';
 
   const DAS_MS = 170;
   const ARR_MS = 30;
+  const TAP_MS = 250;       // shorter than this with little movement = tap
+  const FLICK_PX_MS = 0.6;  // downward speed that counts as a hard drop
 
   const BINDINGS = {
     ArrowLeft: 'left',
@@ -33,9 +39,12 @@
   };
 
   class Input {
-    constructor(game, hooks) {
+    constructor(game, hooks, opts) {
       this.game = game;
       this.hooks = hooks || {};
+      opts = opts || {};
+      this.das = opts.das != null ? opts.das : DAS_MS;
+      this.arr = opts.arr != null ? opts.arr : ARR_MS;
       this.held = new Set();
       this.dir = 0;        // horizontal direction currently repeating
       this.dasTimer = 0;
@@ -118,11 +127,61 @@
     update(dt) {
       if (!this.dir) return;
       this.dasTimer += dt;
-      if (this.dasTimer < DAS_MS) return;
+      if (this.dasTimer < this.das) return;
+      if (this.arr === 0) {
+        // ARR 0 (taken from agent-8): once DAS elapses, go to the wall.
+        while (this.game.move(this.dir)) { /* until blocked */ }
+        return;
+      }
       this.arrTimer += dt;
-      while (this.arrTimer >= ARR_MS) {
-        this.arrTimer -= ARR_MS;
+      while (this.arrTimer >= this.arr) {
+        this.arrTimer -= this.arr;
         if (!this.game.move(this.dir)) { this.arrTimer = 0; break; }
+      }
+    }
+
+    // ---- touch ---------------------------------------------------------
+
+    attachTouch(field, cellPx, holdPanel) {
+      const game = this.game;
+      let t = null;   // active gesture
+      field.style.touchAction = 'none';
+      field.addEventListener('pointerdown', e => {
+        if (e.pointerType === 'mouse' && e.button !== 0) return;
+        field.setPointerCapture(e.pointerId);
+        t = { id: e.pointerId, x0: e.clientX, y0: e.clientY, t0: performance.now(),
+              lastX: e.clientX, lastY: e.clientY, movedX: 0, movedY: 0, soft: false };
+        e.preventDefault();
+      });
+      field.addEventListener('pointermove', e => {
+        if (!t || e.pointerId !== t.id) return;
+        // one cell per cell-width dragged, in either direction
+        const dx = e.clientX - t.x0;
+        const cells = Math.trunc(dx / cellPx);
+        while (t.movedX < cells) { game.move(1); t.movedX++; }
+        while (t.movedX > cells) { game.move(-1); t.movedX--; }
+        // dragging down a cell or more turns soft drop on for the gesture
+        const dy = e.clientY - t.y0;
+        if (!t.soft && dy > cellPx && Math.abs(dy) > Math.abs(dx)) { t.soft = true; game.softDrop(true); }
+        t.lastX = e.clientX; t.lastY = e.clientY;
+      });
+      const end = e => {
+        if (!t || e.pointerId !== t.id) return;
+        const dt = performance.now() - t.t0;
+        const dx = e.clientX - t.x0, dy = e.clientY - t.y0;
+        if (t.soft) game.softDrop(false);
+        if (dt < TAP_MS && Math.abs(dx) < cellPx / 2 && Math.abs(dy) < cellPx / 2) {
+          if (game.over || game.paused) { if (this.hooks.tap) this.hooks.tap(); }
+          else game.rotate(1);
+        } else if (dy > cellPx * 2 && dy / dt > FLICK_PX_MS && Math.abs(dy) > Math.abs(dx)) {
+          game.hardDrop();
+        }
+        t = null;
+      };
+      field.addEventListener('pointerup', end);
+      field.addEventListener('pointercancel', end);
+      if (holdPanel) {
+        holdPanel.addEventListener('pointerdown', e => { e.preventDefault(); game.holdPiece(); });
       }
     }
   }

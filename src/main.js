@@ -29,12 +29,34 @@
   let bestScore = best.get();
   let wasOver = false;
 
+  // DAS/ARR from the URL hash (#das=100&arr=0), else localStorage, else
+  // the defaults. Whatever the hash says is remembered.
+  const SETTINGS_KEY = 'tetris-agent-9-input';
+  const settings = (() => {
+    let saved = {};
+    try { saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}'); } catch (e) { /* ignore */ }
+    const num = (k, fallback) => {
+      const m = new RegExp(k + '=(\\d+)').exec(location.hash);
+      if (m) return Number(m[1]);
+      return typeof saved[k] === 'number' ? saved[k] : fallback;
+    };
+    const s = { das: num('das', window.Input.DAS_MS), arr: num('arr', window.Input.ARR_MS) };
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); } catch (e) { /* ignore */ }
+    return s;
+  })();
+  $('das').textContent = settings.das;
+  $('arr').textContent = settings.arr;
+
+  const restart = e => { game.reset(e && e.shiftKey ? game.seed : undefined); publishSeed(); wasOver = false; };
   const input = new window.Input.Input(game, {
     // R starts a fresh seed; Shift+R replays the current one.
-    restart(e) { game.reset(e && e.shiftKey ? game.seed : undefined); publishSeed(); wasOver = false; },
+    restart,
     pause() { game.setPaused(!game.paused); },
-  });
+    // a tap on the field while paused resumes, while over restarts
+    tap() { if (game.over) restart(); else game.setPaused(false); },
+  }, settings);
   input.attach(window);
+  input.attachTouch($('board'), 30, $('hold'));
 
   // Losing focus pauses and drops every held key, so DAS does not fire into
   // the first frame after the tab comes back.

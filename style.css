@@ -136,3 +136,6 @@ kbd {
   font: inherit;
   text-align: center;
 }
+
+.keys .dim { color: #64748b; margin-top: 8px; line-height: 1.5; }
+.keys code { color: var(--muted); }

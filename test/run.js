@@ -190,7 +190,9 @@ check('T rotate(2) goes to state 2', g.rotate(2) && g.piece.rot === 2);
 check('T rotate(2) again back to 0', g.rotate(2) && g.piece.rot === 0);
 g = mk(['I']);
 g.rotate(1); while (g.move(-1));  // vertical I flush left, box x = -2
-check('vertical I at left wall flips 180 (1 -> 3) using a sideways kick', g.rotate(2) && g.piece.rot === 3 && g.piece.x >= -1);
+// rot 3 in place would be column -1, so the 180 takes its second test (+1, 0) to x = -1.
+// kickIndex still reads 0: a 180 never records its test index (see rotate()).
+check('vertical I at left wall flips 180 (1 -> 3) via the (+1, 0) test, x = -1', g.rotate(2) && g.piece.rot === 3 && g.piece.x === -1 && g.kickIndex === 0);
 // A 180 that needs its later tests must not be graded as a fifth-kick T-spin.
 g = mk(['T']);
 g.piece.rot = 0; g.piece.x = 3; g.piece.y = TOTAL - 2;             // T flat on the floor, rot 0 (pointing up)
