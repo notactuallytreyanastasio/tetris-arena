@@ -11,7 +11,8 @@
 
 const COLS = 10;
 const VISIBLE_ROWS = 20;
-const HIDDEN_ROWS = 2;            // spawn zone above the skyline
+const HIDDEN_ROWS = 4;            // spawn zone above the skyline; 4 not 2 because
+                                  // SRS kicks can lift a piece two rows (taken from agent-3)
 const ROWS = VISIBLE_ROWS + HIDDEN_ROWS;
 const CELL = 30;                  // px; the board canvas is COLS*CELL x VISIBLE_ROWS*CELL
 
@@ -25,6 +26,15 @@ const ARR = 40;
 const LOCK_DELAY = 500;
 const LOCK_RESETS = 15;
 const SOFT_DROP_FACTOR = 20;      // soft drop is this many times faster than gravity
+const CLEAR_FLASH = 140;          // ms the cleared rows stay lit before collapsing
+const LINES_PER_LEVEL = 10;
+
+// Guideline scoring: base per clear count, times level. A tetris directly
+// after another tetris (no non-tetris clear between) pays 1.5x.
+const CLEAR_SCORE = [0, 100, 300, 500, 800];
+const BACK_TO_BACK = 1.5;
+const SOFT_DROP_POINTS = 1;       // per row
+const HARD_DROP_POINTS = 2;       // per row
 
 // Each piece is four explicit orientations (spawn, R, 2, L), written as
 // strings so the shapes are readable in the source. Boxes are 3x3 except I,
@@ -119,10 +129,38 @@ function makeBag(random) {
 // -------------------------------------------------------------------- board
 
 // Row 0 is the top hidden row. Index = y * COLS + x.
+// Everything outside the array is solid, including above row 0, so a piece
+// can never occupy a cell that lock() could not store. The hidden rows are
+// tall enough that this never refuses a legal SRS kick.
 function cellAt(board, x, y) {
-  if (x < 0 || x >= COLS || y >= ROWS) return 1; // walls and floor are solid
-  if (y < 0) return 0;                            // above the board is open air
+  if (x < 0 || x >= COLS || y < 0 || y >= ROWS) return 1;
   return board[y * COLS + x];
+}
+
+// Collapse every full row. Scans bottom-up; after a copyWithin the same
+// index holds the row that was above it, so it is examined again. Returns
+// the number of rows cleared. (Shape of this loop taken from agent-3.)
+function clearFullRows(board) {
+  let cleared = 0;
+  for (let y = ROWS - 1; y >= 0; y--) {
+    if (!rowFull(board, y)) continue;
+    board.copyWithin(COLS, 0, y * COLS);
+    board.fill(0, 0, COLS);
+    cleared++;
+    y++;
+  }
+  return cleared;
+}
+
+function rowFull(board, y) {
+  for (let x = 0; x < COLS; x++) if (!board[y * COLS + x]) return false;
+  return true;
+}
+
+function fullRows(board) {
+  const rows = [];
+  for (let y = 0; y < ROWS; y++) if (rowFull(board, y)) rows.push(y);
+  return rows;
 }
 
 // True if the piece's cells at (px, py, orientation) are all on empty cells.
@@ -138,8 +176,13 @@ function newGame(random = Math.random) {
     board: new Uint8Array(COLS * ROWS),
     nextId: makeBag(random),
     piece: null,          // { id, shape, x, y, o }
-    level: 1,
     over: false,
+
+    score: 0,
+    lines: 0,
+    level: 1,
+    lastClearWasTetris: false,
+    clearing: null,       // { rows: [y...], timer: ms } while rows flash before collapsing
 
     gravityAcc: 0,        // ms toward the next gravity step
     lockTimer: 0,         // ms the piece has been grounded
@@ -160,12 +203,18 @@ function spawn(g) {
   const id = g.nextId();
   const shape = SHAPES[id - 1];
   // Center the bounding box: 3-wide boxes at x=3 (cells 3..5), the I's 4-wide
-  // box also at x=3 (cells 3..6). The box top starts on the top hidden row.
-  const piece = { id, shape, x: 3, y: 0, o: 0 };
+  // box also at x=3 (cells 3..6). The box top sits two rows above the
+  // skyline so the piece's lowest row is the last hidden row.
+  const piece = { id, shape, x: 3, y: HIDDEN_ROWS - 2, o: 0 };
   if (!fits(g.board, shape, piece.x, piece.y, piece.o)) {
-    g.over = true;
-    g.piece = null;
-    return;
+    // Block-out. Try one row higher first so a nearly-full board gets one
+    // more piece (agent-3 does this too).
+    piece.y--;
+    if (!fits(g.board, shape, piece.x, piece.y, piece.o)) {
+      g.over = true;
+      g.piece = null;
+      return;
+    }
   }
   // Guideline: a fresh piece drops one row immediately if it can, so its
   // bottom row is visible the frame it appears.
@@ -179,11 +228,33 @@ function spawn(g) {
 
 function lock(g) {
   const p = g.piece;
+  let anyVisible = false;
   for (const [cx, cy] of p.shape.cells[p.o]) {
     const y = p.y + cy;
-    if (y >= 0) g.board[y * COLS + p.x + cx] = p.id;
+    g.board[y * COLS + p.x + cx] = p.id;
+    if (y >= HIDDEN_ROWS) anyVisible = true;
   }
   g.piece = null;
+  // Lock-out: a piece that settles entirely above the skyline ends the game
+  // (taken from agent-1). Block-out is handled in spawn().
+  if (!anyVisible) { g.over = true; return; }
+
+  const rows = fullRows(g.board);
+  if (rows.length === 0) { spawn(g); return; }
+  // Rows flash for CLEAR_FLASH ms before they collapse; update() finishes it.
+  g.clearing = { rows, timer: 0 };
+}
+
+function finishClear(g) {
+  const n = clearFullRows(g.board);
+  g.clearing = null;
+  const tetris = n === 4;
+  let points = CLEAR_SCORE[n] * g.level;
+  if (tetris && g.lastClearWasTetris) points = Math.floor(points * BACK_TO_BACK);
+  g.lastClearWasTetris = tetris;
+  g.score += points;
+  g.lines += n;
+  g.level = 1 + Math.floor(g.lines / LINES_PER_LEVEL);
   spawn(g);
 }
 
@@ -221,7 +292,9 @@ function tryRotate(g, dir) {
 
 function hardDrop(g) {
   if (!g.piece || g.over) return;
-  while (tryMove(g, 0, 1)) { /* fall */ }
+  let rows = 0;
+  while (tryMove(g, 0, 1)) rows++;
+  g.score += rows * HARD_DROP_POINTS;
   lock(g);
 }
 
@@ -266,7 +339,13 @@ function release(g, key) {
 
 // Advance the game by dt ms.
 function update(g, dt) {
-  if (g.over || !g.piece) return;
+  if (g.over) return;
+  if (g.clearing) {
+    g.clearing.timer += dt;
+    if (g.clearing.timer >= CLEAR_FLASH) finishClear(g);
+    return;
+  }
+  if (!g.piece) return;
 
   // Horizontal auto-repeat.
   if (g.dasDir !== 0) {
@@ -291,6 +370,7 @@ function update(g, dt) {
   while (g.gravityAcc >= step) {
     g.gravityAcc -= step;
     if (!tryMove(g, 0, 1)) { g.gravityAcc = 0; break; }
+    if (g.held.down) g.score += SOFT_DROP_POINTS;
   }
 
   // Lock delay: only counts while the piece cannot fall.
@@ -307,8 +387,10 @@ function update(g, dt) {
 if (typeof module !== 'undefined') {
   module.exports = {
     COLS, ROWS, HIDDEN_ROWS, VISIBLE_ROWS, DAS, ARR, LOCK_DELAY, LOCK_RESETS,
+    CLEAR_FLASH, CLEAR_SCORE, LINES_PER_LEVEL,
     SHAPES, COLORS, KICKS_JLSTZ, KICKS_I, gravityMs, makeBag, cellAt, fits,
-    newGame, spawn, lock, tryMove, tryRotate, hardDrop, press, release, update,
+    clearFullRows, fullRows,
+    newGame, spawn, lock, finishClear, tryMove, tryRotate, hardDrop, press, release, update,
   };
 }
 
@@ -317,7 +399,29 @@ if (typeof module !== 'undefined') {
 function mount(doc) {
   const boardCanvas = doc.getElementById('board');
   const ctx = boardCanvas.getContext('2d');
-  const g = newGame();
+  const hud = {
+    score: doc.getElementById('score'),
+    lines: doc.getElementById('lines'),
+    level: doc.getElementById('level'),
+  };
+  const overlay = doc.getElementById('overlay');
+  const overlayTitle = doc.getElementById('overlay-title');
+  const overlayHint = doc.getElementById('overlay-hint');
+  let g = newGame();
+
+  // Only touch the DOM when a number changes; text writes are the one thing
+  // here that costs layout.
+  const shown = { score: -1, lines: -1, level: -1, over: null };
+  function syncHud() {
+    for (const k of ['score', 'lines', 'level']) {
+      if (shown[k] !== g[k]) { shown[k] = g[k]; hud[k].textContent = String(g[k]); }
+    }
+    if (shown.over !== g.over) {
+      shown.over = g.over;
+      overlay.classList.toggle('hidden', !g.over);
+      if (g.over) { overlayTitle.textContent = 'Game over'; overlayHint.textContent = 'Press R to restart'; }
+    }
+  }
 
   function drawCell(c, x, y, color, size = CELL) {
     // Flat fill with a lighter top-left bevel; the inset keeps a 1px grid line.
@@ -355,6 +459,16 @@ function mount(doc) {
         if (y >= 0) drawCell(ctx, (p.x + cx) * CELL, y * CELL, COLORS[p.id]);
       }
     }
+
+    // Rows about to collapse flash white, fading over CLEAR_FLASH.
+    if (g.clearing) {
+      const a = 1 - g.clearing.timer / CLEAR_FLASH;
+      ctx.fillStyle = `rgba(255,255,255,${(0.35 + 0.65 * a).toFixed(3)})`;
+      for (const y of g.clearing.rows) {
+        if (y >= HIDDEN_ROWS) ctx.fillRect(0, (y - HIDDEN_ROWS) * CELL, w, CELL);
+      }
+    }
+    syncHud();
   }
 
   // Keyboard. keydown auto-repeat from the OS is ignored; DAS is ours.
@@ -363,6 +477,7 @@ function mount(doc) {
     ArrowUp: 'cw', KeyX: 'cw', KeyZ: 'ccw', Space: 'hard',
   };
   doc.addEventListener('keydown', e => {
+    if (e.code === 'KeyR') { g = newGame(); return; }
     const key = KEYMAP[e.code];
     if (!key) return;
     e.preventDefault();
@@ -384,7 +499,7 @@ function mount(doc) {
     requestAnimationFrame(frame);
   }
   requestAnimationFrame(frame);
-  return g;
+  return () => g;
 }
 
 if (typeof document !== 'undefined') mount(document);
