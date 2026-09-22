@@ -2,7 +2,8 @@
 
 Open `index.html`. No build, no dependencies. Three files: `index.html`
 (layout and key legend), `style.css`, `game.js` (everything else, one
-closure, about 750 lines). `node test/run.js` runs 123 headless checks.
+closure, about 770 lines). `node test/run.js` runs 135 headless checks;
+`test/browser.sh` loads the real file in headless Chrome.
 
 Keys: arrows move and soft drop, Up or X rotates clockwise, Z
 counter-clockwise, A rotates 180, Space hard drops, C or Shift holds, P or
@@ -42,7 +43,10 @@ drift relative to each other, and a level change is one number. The delta
 is clamped to 100ms so a backgrounded tab does not fast-forward, and the
 tab hiding pauses the game anyway.
 
-**Input** ignores OS key repeat and runs its own. Holding both directions:
+**Input** ignores OS key repeat and runs its own. A rotate or hold pressed
+while rows are flashing is remembered and applied to the next piece the
+moment it spawns (initial rotation and hold), so the flash never eats a
+press. Holding both directions:
 the last pressed wins, and releasing it resumes the other with no new DAS
 wait. The DAS accumulator keeps running while rows flash, so a direction
 held through a clear is already charged when the next piece appears. Every
@@ -76,10 +80,13 @@ Best score is kept in `localStorage`.
 - Soft drop is gravity divided by 20, so it gets faster with level rather
   than being a fixed rate.
 - No sound, no touch controls.
-- Only seen in a browser as a headless Chrome screenshot (board, ghost,
-  queue, HUD all render). Every behaviour above is checked by `test/`: a
+- Not played by a person. Every behaviour above is checked by `test/`: a
   harness that stubs the DOM so the real `game.js` runs unmodified, and
-  five suites that drive frames at 16ms. `node test/run.js` runs them all.
+  six suites that drive frames at 16ms. `test/browser.sh` runs
+  `probe.html` in headless Chrome and checks that the file loads with no
+  errors and that real key events rotate and hard-drop a piece. Headless
+  Chrome fires almost no animation frames under `--dump-dom`, so DAS and
+  gravity are only verified in Node.
 
 ## Taken from whom
 

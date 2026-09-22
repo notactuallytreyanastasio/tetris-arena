@@ -2,7 +2,7 @@
 // cannot leak into another. Exit code is non-zero if any check failed.
 const { spawnSync } = require('child_process');
 const path = require('path');
-const suites = ['m2', 'm3', 'm4', 'm5', 'm6'];
+const suites = ['m2', 'm3', 'm4', 'm5', 'm6', 'm7'];
 let failed = 0, total = 0;
 for (const s of suites) {
   const r = spawnSync(process.execPath, [path.join(__dirname, s + '.js')], { encoding: 'utf8' });

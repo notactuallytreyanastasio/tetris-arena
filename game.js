@@ -220,6 +220,8 @@
     combo: -1,          // consecutive clearing locks; -1 = none
     toasts: [],         // [{ text, ms }] scoring feedback drawn on the board
     trail: null,        // { cols: [[x, fromY, toY]], ms } after a hard drop
+    irs: 0,             // rotation pressed during the flash, applied at spawn
+    ihs: false,         // hold pressed during the flash, applied at spawn
     hiscore: 0,
     seed: 0,
     rng: Math.random,
@@ -274,7 +276,7 @@
     publishSeed(seed);
     board.fill(0);
     state.bag = []; state.queue = []; state.hold = 0; state.holdUsed = false; state.clearing = null;
-    state.paused = false; state.combo = -1; state.toasts = []; state.trail = null;
+    state.paused = false; state.combo = -1; state.toasts = []; state.trail = null; state.irs = 0; state.ihs = false;
     state.hiscore = loadHiscore();
     state.score = 0; state.lines = 0; state.level = 1; state.b2b = false;
     state.gravityMs = gravityMs(1);
@@ -408,6 +410,10 @@
       toast(`PERFECT CLEAR +${bonus}`);
     }
     state.piece = spawn();
+    // initial hold / rotation: input pressed while the rows were flashing
+    if (state.ihs) holdPiece();
+    if (state.irs && state.piece && !state.over) tryRotate(state.irs);
+    state.ihs = false; state.irs = 0;
   }
 
   // Lowest y the piece can occupy from where it is: the ghost, and hard drop.
@@ -499,6 +505,13 @@
     tryMove(dir, 0);
   }
 
+  // During the clear flash there is no piece; remember the press and apply
+  // it to the next piece the moment it spawns.
+  function rotateOrBuffer(dir) {
+    if (state.clearing) state.irs = dir;
+    else tryRotate(dir);
+  }
+
   function onKeyDown(e) {
     if (e.repeat) return; // we do our own repeat
     if (e.code === 'KeyR') { reset(e.shiftKey ? state.seed : undefined); e.preventDefault(); return; }
@@ -508,11 +521,11 @@
       case 'ArrowLeft':  held.add(e.code); press(-1); break;
       case 'ArrowRight': held.add(e.code); press(1); break;
       case 'ArrowDown':  state.soft = true; state.gravityAcc = state.gravityMs / SOFT_DROP; break;
-      case 'ArrowUp': case 'KeyX': tryRotate(1); break;
-      case 'KeyZ': case 'ControlLeft': tryRotate(-1); break;
-      case 'KeyA': tryRotate(2); break;
+      case 'ArrowUp': case 'KeyX': rotateOrBuffer(1); break;
+      case 'KeyZ': case 'ControlLeft': rotateOrBuffer(-1); break;
+      case 'KeyA': rotateOrBuffer(2); break;
       case 'Space': hardDrop(); break;
-      case 'KeyC': case 'ShiftLeft': case 'ShiftRight': holdPiece(); break;
+      case 'KeyC': case 'ShiftLeft': case 'ShiftRight': if (state.clearing) state.ihs = true; else holdPiece(); break;
       default: return;
     }
     e.preventDefault();
