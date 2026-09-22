@@ -180,20 +180,28 @@ const LOCK_RESETS = 15;     // ...unless moved/rotated, up to this many times
 const DAS = 170;            // held left/right: delay before auto-shift
 const ARR = 40;             // ...then this long between shifts
 const SOFT_DROP_MULT = 20;  // soft drop is this many times gravity
+const LINES_PER_LEVEL = 10;
+const CLEAR_SCORE = [0, 100, 300, 500, 800];  // guideline, x level
 
 // ---------------------------------------------------------------------------
 // Game state
 // ---------------------------------------------------------------------------
-const game = {
-  board: makeBoard(),
-  nextPiece: makeBag(),
-  cur: null,          // { name, rot, x, y }
-  level: 1,
-  gravityAcc: 0,      // ms accumulated toward the next gravity step
-  lockAcc: 0,         // ms the piece has been resting on something
-  lockResets: 0,      // move-resets used for the current piece
-  over: false,
-};
+const game = {};
+
+function reset() {
+  game.board = makeBoard();
+  game.nextPiece = makeBag();
+  game.cur = null;        // { name, rot, x, y }
+  game.score = 0;
+  game.lines = 0;
+  game.level = 1;
+  game.b2b = false;       // last clear was a tetris (back-to-back bonus)
+  game.gravityAcc = 0;    // ms accumulated toward the next gravity step
+  game.lockAcc = 0;       // ms the piece has been resting on something
+  game.lockResets = 0;    // move-resets used for the current piece
+  game.over = false;
+  spawn();
+}
 
 const input = {
   left: false, right: false, down: false,
@@ -221,9 +229,55 @@ function spawn() {
   return false;
 }
 
+// Clear every full row. Scan bottom-up; when a row is full, shift everything
+// above it down one row with copyWithin and zero the top row. Returns count.
+function clearLines(board) {
+  let cleared = 0;
+  for (let y = TOTAL - 1; y >= 0; y--) {
+    let full = true;
+    for (let x = 0; x < COLS; x++) {
+      if (!board[y * COLS + x]) { full = false; break; }
+    }
+    if (!full) continue;
+    board.copyWithin(COLS, 0, y * COLS);
+    board.fill(0, 0, COLS);
+    cleared++;
+    y++; // re-examine this row: it now holds what was above it
+  }
+  return cleared;
+}
+
+function addScore(points) {
+  game.score += points;
+}
+
+function onLinesCleared(n) {
+  if (n === 0) return;
+  let points = CLEAR_SCORE[n] * game.level;
+  // back-to-back tetris pays 1.5x
+  if (n === 4) {
+    if (game.b2b) points = Math.floor(points * 1.5);
+    game.b2b = true;
+  } else {
+    game.b2b = false;
+  }
+  addScore(points);
+  game.lines += n;
+  game.level = 1 + Math.floor(game.lines / LINES_PER_LEVEL);
+}
+
 function lockPiece() {
   const c = game.cur;
   stamp(game.board, c.name, c.rot, c.x, c.y);
+  // Lock-out: every cell of the piece ended up in the hidden buffer.
+  const cells = PIECES[c.name].states[c.rot];
+  let visible = false;
+  for (let i = 0; i < 4; i++) if (c.y + cells[i][1] >= BUFFER) visible = true;
+  if (!visible) {
+    game.over = true;
+    return;
+  }
+  onLinesCleared(clearLines(game.board));
   spawn();
 }
 
@@ -277,15 +331,18 @@ function rotate(dir) {
 
 function hardDrop() {
   if (game.over) return;
-  while (tryMove(0, 1)) { /* fall */ }
+  let rows = 0;
+  while (tryMove(0, 1)) rows++;
+  addScore(rows * 2);
   lockPiece();
 }
 
-function stepGravity() {
+function stepGravity(soft) {
   if (!tryMove(0, 1)) {
     // resting: lock delay is handled in update()
     return;
   }
+  if (soft) addScore(1);
   game.lockAcc = 0;
 }
 
@@ -307,11 +364,12 @@ function update(dt) {
   if (game.over) return;
   updateInput(dt);
 
-  const interval = input.down ? gravityMs(game.level) / SOFT_DROP_MULT : gravityMs(game.level);
+  const soft = input.down;
+  const interval = soft ? gravityMs(game.level) / SOFT_DROP_MULT : gravityMs(game.level);
   game.gravityAcc += dt;
   while (game.gravityAcc >= interval && !game.over) {
     game.gravityAcc -= interval;
-    stepGravity();
+    stepGravity(soft);
   }
 
   if (grounded()) {
@@ -342,6 +400,7 @@ function onKeyDown(e) {
     case 'ArrowUp': case 'KeyX': rotate(1); break;
     case 'KeyZ': case 'ControlLeft': rotate(-1); break;
     case 'Space': hardDrop(); break;
+    case 'KeyR': reset(); break;
     default: return;
   }
   e.preventDefault();
@@ -369,6 +428,32 @@ function onKeyUp(e) {
 // ---------------------------------------------------------------------------
 const boardCanvas = document.getElementById('board');
 const ctx = boardCanvas.getContext('2d');
+const hud = {
+  score: document.getElementById('score'),
+  level: document.getElementById('level'),
+  lines: document.getElementById('lines'),
+  overlay: document.getElementById('overlay'),
+  overlayTitle: document.getElementById('overlay-title'),
+  overlayHint: document.getElementById('overlay-hint'),
+};
+const shown = { score: -1, level: -1, lines: -1, overlay: null };
+
+// DOM writes only when a value changes; textContent every frame is wasteful.
+function renderHud() {
+  if (shown.score !== game.score) hud.score.textContent = shown.score = game.score;
+  if (shown.level !== game.level) hud.level.textContent = shown.level = game.level;
+  if (shown.lines !== game.lines) hud.lines.textContent = shown.lines = game.lines;
+
+  const state = game.over ? 'over' : null;
+  if (shown.overlay !== state) {
+    shown.overlay = state;
+    hud.overlay.classList.toggle('hidden', state === null);
+    if (state === 'over') {
+      hud.overlayTitle.textContent = 'Game over';
+      hud.overlayHint.textContent = 'press R to restart';
+    }
+  }
+}
 
 function drawCell(c, x, y, color, size) {
   const px = x * size;
@@ -421,6 +506,8 @@ function render() {
     const c = game.cur;
     drawPiece(ctx, c.name, c.rot, c.x, c.y, PIECES[c.name].color, CELL);
   }
+
+  renderHud();
 }
 
 // ---------------------------------------------------------------------------
@@ -439,8 +526,8 @@ function frame(now) {
 window.addEventListener('keydown', onKeyDown);
 window.addEventListener('keyup', onKeyUp);
 
-spawn();
+reset();
 requestAnimationFrame(frame);
 
 // Exposed for headless testing; not used by the game itself.
-window.__tetris = { game, input, PIECES, fits, move, rotate, hardDrop, update, spawn, COLS, ROWS, BUFFER };
+window.__tetris = { game, input, PIECES, fits, move, rotate, hardDrop, update, spawn, reset, clearLines, COLS, ROWS, BUFFER };
