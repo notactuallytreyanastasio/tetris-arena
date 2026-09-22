@@ -194,6 +194,8 @@ const state = {
   hold: 0,          // parked piece id, 0 = none
   holdUsed: false,  // hold is allowed once per piece
   seed: 0,          // bag seed, shown in the HUD and the URL hash
+  best: 0,          // best score seen in this browser (localStorage)
+  paused: false,
   score: 0,
   lines: 0,
   level: 1,
@@ -232,9 +234,28 @@ function reset(seed) {
   queue.length = 0;
   Object.assign(state, {
     cur: null, hold: 0, holdUsed: false, score: 0, lines: 0, level: 1, combo: -1, b2b: false,
-    over: false, clearing: null, event: '', gravityAcc: 0, lockAcc: 0, lockResets: 0,
+    over: false, paused: false, clearing: null, event: '', gravityAcc: 0, lockAcc: 0, lockResets: 0,
   });
   spawn();
+}
+
+// Best score lives in localStorage, which file:// and private windows may
+// refuse; the game must not care.
+function loadBest() {
+  try { return Number(localStorage.getItem('tetris-agent-1-best')) || 0; } catch (e) { return 0; }
+}
+function saveBest() {
+  if (state.score <= state.best) return;
+  state.best = state.score;
+  try { localStorage.setItem('tetris-agent-1-best', String(state.best)); } catch (e) { /* ignore */ }
+}
+
+// Pausing drops every held key, so nothing auto-repeats on resume, and the
+// loop keeps rendering so the board stays visible under the overlay.
+function setPaused(on) {
+  if (state.over || state.paused === on) return;
+  state.paused = on;
+  if (on) releaseAll();
 }
 
 function spawn(id = nextId()) {
@@ -259,13 +280,14 @@ function place(id) {
   }
   state.cur = { id, r: 0, x, y: HIDDEN - 2, lowestY: 0, spun: false, kick: -1 };
   state.over = true;   // block out
+  saveBest();
 }
 
 // Park the current piece and bring out the held one (or the next one).
 // Once per piece: the flag clears on the next natural spawn, so you cannot
 // swap back and forth to stall.
 function hold() {
-  if (state.over || !state.cur || state.holdUsed) return false;
+  if (state.over || state.paused || !state.cur || state.holdUsed) return false;
   const parked = state.hold;
   state.hold = state.cur.id;
   state.holdUsed = true;
@@ -308,7 +330,7 @@ function shift(dx, dy) {
 }
 
 function move(dx) {
-  if (state.over || !state.cur) return;
+  if (state.over || state.paused || !state.cur) return;
   if (shift(dx, 0)) noteMoved();
 }
 
@@ -316,7 +338,7 @@ function move(dx) {
 // (from, dir) pair; the first offset that fits wins. Records which kick was
 // used because the fifth one upgrades a mini T-spin to a full one.
 function rotate(dir) {
-  if (state.over || !state.cur) return false;
+  if (state.over || state.paused || !state.cur) return false;
   const p = state.cur;
   const to = (p.r + (dir === 0 ? 1 : 3)) % 4;
   const kicks = kicksFor(p.id)[p.r][dir];
@@ -337,7 +359,7 @@ function rotate(dir) {
 }
 
 function hardDrop() {
-  if (state.over || !state.cur) return;
+  if (state.over || state.paused || !state.cur) return;
   let rows = 0;
   while (shift(0, 1)) rows++;
   state.score += rows * SCORE.hard;
@@ -396,7 +418,7 @@ function lock() {
     if (y >= HIDDEN) allHidden = false;
   }
   state.cur = null;
-  if (allHidden) { state.over = true; return; }   // lock out
+  if (allHidden) { state.over = true; saveBest(); return; }   // lock out
 
   const rows = fullRows();
   if (rows.length === 0) {
@@ -432,9 +454,16 @@ function frame(now) {
 
 // Auto-shift: the first shift happens on keydown; holding waits DAS, then
 // shifts every ARR. Timers run on the frame clock, not the OS key repeat.
+// With no piece in play (rows are flashing) the charge still accumulates,
+// capped at DAS, so the next piece gets exactly one immediate shift and then
+// ARR, instead of going dead (agent-10) or bursting (agent-5's cap).
 function updateInput(dt) {
   const dir = activeDir();
   if (dir === 0) return;
+  if (!state.cur) {
+    input.dasAcc = Math.min(input.dasAcc + dt, DAS);
+    return;
+  }
   input.dasAcc += dt;
   const threshold = input.charged ? ARR : DAS;
   while (input.dasAcc >= threshold) {
@@ -445,9 +474,10 @@ function updateInput(dt) {
 }
 
 function update(dt) {
-  if (state.over) return;
+  if (state.over || state.paused) return;
 
   if (state.clearing) {
+    updateInput(dt);
     state.clearing.acc += dt;
     if (state.clearing.acc >= CLEAR_FLASH) finishClear();
     return;
@@ -506,6 +536,7 @@ function onKeyDown(e) {
     case 'KeyC': case 'ShiftLeft': case 'ShiftRight': hold(); break;
     case 'KeyR': reset(e.shiftKey ? state.seed : undefined); break;   // Shift+R replays the same seed
     case 'Enter': if (state.over) reset(); break;
+    case 'KeyP': case 'Escape': setPaused(!state.paused); break;
     default: return;
   }
   e.preventDefault();
@@ -529,7 +560,9 @@ function releaseAll() {
 
 window.addEventListener('keydown', onKeyDown);
 window.addEventListener('keyup', onKeyUp);
-window.addEventListener('blur', releaseAll);
+// Losing the window or the tab pauses; a game you cannot see should not run.
+window.addEventListener('blur', () => { releaseAll(); setPaused(true); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) setPaused(true); });
 
 // ---------------------------------------------------------------- 5. render
 
@@ -547,6 +580,7 @@ const hud = {
   level: document.getElementById('level'),
   lines: document.getElementById('lines'),
   seed: document.getElementById('seed'),
+  best: document.getElementById('best'),
   holdPanel: document.getElementById('hold-panel'),
   event: document.getElementById('event'),
   overlay: document.getElementById('overlay'),
@@ -674,21 +708,27 @@ function renderPanels() {
 
 // DOM writes only when a value changes (from agent-3); textContent every
 // frame is wasted layout work.
-const shown = { score: -1, level: -1, lines: -1, seed: -1, event: null, overlay: null };
+const shown = { score: -1, level: -1, lines: -1, seed: -1, best: -1, event: null, overlay: null };
 function renderHud() {
   if (shown.seed !== state.seed) hud.seed.textContent = shown.seed = state.seed;
+  if (shown.best !== state.best) hud.best.textContent = shown.best = state.best;
   if (shown.score !== state.score) hud.score.textContent = shown.score = state.score;
   if (shown.level !== state.level) hud.level.textContent = shown.level = state.level;
   if (shown.lines !== state.lines) hud.lines.textContent = shown.lines = state.lines;
   if (shown.event !== state.event) hud.event.textContent = shown.event = state.event;
 
-  const overlay = state.over ? 'over' : null;
+  const overlay = state.over ? 'over' : state.paused ? 'paused' : null;
   if (shown.overlay !== overlay) {
     shown.overlay = overlay;
     hud.overlay.classList.toggle('hidden', overlay === null);
     if (overlay === 'over') {
       hud.overlayTitle.textContent = 'Game over';
-      hud.overlayText.textContent = 'Press R to restart';
+      hud.overlayText.textContent = state.score >= state.best && state.score > 0
+        ? 'New best. R for a new game, Shift+R to replay this seed'
+        : 'R for a new game, Shift+R to replay this seed';
+    } else if (overlay === 'paused') {
+      hud.overlayTitle.textContent = 'Paused';
+      hud.overlayText.textContent = 'P to resume';
     }
   }
 }
@@ -701,13 +741,15 @@ function render() {
 
 // ---------------------------------------------------------------- go
 
+state.best = loadBest();
 reset(seedFromHash() ?? undefined);
 requestAnimationFrame(frame);
 
 // Debug handle: lets a test harness (or a curious reader) drive the loop.
 window.__tetris = {
   state, input, board, queue, PIECES, KICKS, SCORE, collides, frame, move, rotate, hardDrop,
-  hold, ghostY, lock, reset, tspinKind, fullRows, mulberry32, onKeyDown, onKeyUp, W, H, HIDDEN, NEXT_COUNT,
+  hold, ghostY, lock, reset, setPaused, tspinKind, fullRows, mulberry32, onKeyDown, onKeyUp,
+  W, H, HIDDEN, NEXT_COUNT, DAS, ARR, LOCK_DELAY, CLEAR_FLASH,
 };
 
 })();

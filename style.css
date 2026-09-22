@@ -27,7 +27,7 @@ html, body {
 }
 
 .panel {
-  width: 140px;
+  width: 168px;
   display: flex;
   flex-direction: column;
   gap: 16px;
@@ -88,8 +88,8 @@ canvas {
   gap: 2px 8px;
   font-size: 12px;
 }
-.keys dt { color: var(--muted); }
-.keys dd { margin: 0; }
+.keys dt { color: var(--muted); white-space: nowrap; }
+.keys dd { margin: 0; white-space: nowrap; }
 
 .overlay {
   position: absolute;
@@ -103,7 +103,7 @@ canvas {
   text-align: center;
 }
 .overlay h1 { margin: 0 0 6px; font-size: 26px; letter-spacing: .08em; }
-.overlay p { margin: 0; color: var(--muted); }
+.overlay p { margin: 0 12px; color: var(--muted); }
 .hidden { display: none; }
 
 @media (max-width: 640px) {
