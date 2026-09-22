@@ -2,6 +2,10 @@
 // calls update(dt) every frame with elapsed milliseconds and the game
 // advances its own accumulators. That keeps everything testable in node.
 
+const LOCK_DELAY = 500;   // ms a grounded piece waits before locking
+const LOCK_RESETS = 15;   // move/rotate resets allowed per lowest row reached
+const SOFT_DROP_MS = 40;  // ms per row while soft dropping (floor; never slower than gravity)
+
 class Game {
   constructor() { this.reset(); }
 
@@ -14,6 +18,11 @@ class Game {
     this.level = 1;
     this.over = false;
     this.gravityAcc = 0;      // ms since the last gravity step
+    this.softAcc = 0;         // ms since the last soft-drop step
+    this.softDrop = false;    // set by input while Down is held
+    this.lockAcc = 0;         // ms the piece has been grounded
+    this.lockResets = 0;      // resets used since the last new lowest row
+    this.lowestY = 0;         // lowest row this piece has reached
     this.spawn();
   }
 
@@ -44,8 +53,14 @@ class Game {
       this.active = null;
       return;
     }
+    // Step down once if free so the piece is in view on its first frame.
+    if (!this.board.collides(PIECES.cells(type, 0), p.x, p.y + 1)) p.y = 1;
     this.active = p;
     this.gravityAcc = 0;
+    this.softAcc = 0;
+    this.lockAcc = 0;
+    this.lockResets = 0;
+    this.lowestY = p.y;
   }
 
   cells(p = this.active) { return PIECES.cells(p.type, p.rot); }
@@ -54,28 +69,96 @@ class Game {
     return !this.board.collides(PIECES.cells(p.type, rot), p.x + dx, p.y + dy);
   }
 
+  grounded() { return !this.fits(this.active, 0, 1); }
+
+  // A successful move or rotate while grounded restarts the lock timer, up
+  // to LOCK_RESETS times. The budget refills in descend() on a new lowest row.
+  noteMoved() {
+    if (this.grounded() && this.lockResets < LOCK_RESETS) {
+      this.lockAcc = 0;
+      this.lockResets += 1;
+    }
+  }
+
+  move(dx) {
+    if (this.over || !this.active) return false;
+    if (!this.fits(this.active, dx, 0)) return false;
+    this.active.x += dx;
+    this.noteMoved();
+    return true;
+  }
+
+  // dir = +1 clockwise, -1 counter-clockwise. Try the base position and
+  // then each SRS kick offset in order; the first that fits wins.
+  rotate(dir) {
+    if (this.over || !this.active) return false;
+    const p = this.active;
+    const from = p.rot, to = (p.rot + dir + 4) & 3;
+    for (const [kx, ky] of PIECES.kicks(p.type, from, to)) {
+      if (this.fits(p, kx, ky, to)) {
+        p.x += kx; p.y += ky; p.rot = to;
+        this.noteMoved();
+        return true;
+      }
+    }
+    return false;
+  }
+
+  // Move down one row if possible. Returns true if it moved.
+  descend() {
+    const p = this.active;
+    if (!this.fits(p, 0, 1)) return false;
+    p.y += 1;
+    if (p.y > this.lowestY) {   // step reset: new lowest row refills the budget
+      this.lowestY = p.y;
+      this.lockResets = 0;
+      this.lockAcc = 0;
+    }
+    return true;
+  }
+
+  hardDrop() {
+    if (this.over || !this.active) return;
+    while (this.descend()) { /* fall */ }
+    this.lock();
+  }
+
   lock() {
     const p = this.active;
     this.board.merge(this.cells(p), p.x, p.y, p.type);
+    // Lock out: every cell of the piece is still in the hidden rows.
+    if (this.cells(p).every(([, dy]) => p.y + dy < Board.HIDDEN)) {
+      this.over = true;
+      this.active = null;
+      return;
+    }
     const cleared = this.board.clearLines();
     this.lines += cleared;
     this.spawn();
   }
 
-  // One gravity step: move down or lock.
-  step() {
-    const p = this.active;
-    if (this.fits(p, 0, 1)) p.y += 1;
-    else this.lock();
-  }
-
   update(dt) {
     if (this.over || !this.active) return;
+
+    // Gravity and soft drop are separate accumulators so soft drop has a
+    // fixed floor speed and never ends up slower than gravity itself.
     this.gravityAcc += dt;
     const g = this.gravityMs();
-    while (this.gravityAcc >= g && this.active) {
-      this.gravityAcc -= g;
-      this.step();
+    while (this.gravityAcc >= g) { this.gravityAcc -= g; this.descend(); }
+
+    if (this.softDrop) {
+      this.softAcc += dt;
+      const s = Math.min(SOFT_DROP_MS, g);
+      while (this.softAcc >= s) { this.softAcc -= s; this.descend(); }
+    } else {
+      this.softAcc = 0;
+    }
+
+    if (this.grounded()) {
+      this.lockAcc += dt;
+      if (this.lockAcc >= LOCK_DELAY) this.lock();
+    } else {
+      this.lockAcc = 0;
     }
   }
 }
