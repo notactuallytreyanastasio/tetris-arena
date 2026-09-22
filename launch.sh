@@ -90,6 +90,7 @@ COLS=$(( (N + ROWS - 1) / ROWS ))
   echo '      end if'
   echo '    end repeat'
   echo '  end repeat'
+  echo '  delay 0.7'
   echo '  set panes to {}'
   echo '  repeat with c in cols'
   echo '    set end of panes to c'
