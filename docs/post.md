@@ -73,7 +73,7 @@ opening prompt is one sentence:
     You are agent 7 of 10 in the tetris arena. This directory is your
     worktree, on branch agent-7. Read CLAUDE.md here and follow it exactly.
 
-The rules live in [CLAUDE.md](../CLAUDE.md), committed on `main`, so every
+The rules live in [CLAUDE.md](https://github.com/notactuallytreyanastasio/tetris-arena/blob/main/CLAUDE.md), committed on `main`, so every
 worktree inherits them. The parts that mattered:
 
 > Looking is not cheating here. It is the point. Take what is better than
@@ -281,4 +281,5 @@ agents, told to look, looked, and told to say where things came from, said.
 The graph as exported at the snapshot is in
 [data/arena-graph.json](data/arena-graph.json); the per-minute timeline the
 figures are drawn from is [data/timeline.json](data/timeline.json). The ten
-games are on branches `agent-1` through `agent-10`.
+games are on branches `agent-1` through `agent-10`, and merged into `main`
+under `games/agent-N/`, each with the README its agent wrote.
