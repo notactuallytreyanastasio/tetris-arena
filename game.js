@@ -108,23 +108,34 @@
     return !visible;
   }
 
-  // Bottom-up scan. After copyWithin drops the rows above a full row by
-  // one, the same index holds a new row, so it is examined again before
-  // moving up. No allocation.
-  function clearLines() {
-    let cleared = 0;
-    for (let y = ROWS - 1; y >= 0; ) {
+  function fullRows() {
+    const rows = [];
+    for (let y = 0; y < ROWS; y++) {
       let full = true;
       for (let x = 0; x < COLS; x++) if (!board[y * COLS + x]) { full = false; break; }
-      if (full) {
-        board.copyWithin(COLS, 0, y * COLS);
-        board.fill(0, 0, COLS);
-        cleared++;
-      } else {
-        y--;
-      }
+      if (full) rows.push(y);
     }
-    return cleared;
+    return rows;
+  }
+
+  // rows ascending (top first): removing a row only shifts rows above it,
+  // so the remaining indices stay valid. copyWithin, no allocation.
+  function removeRows(rows) {
+    for (const y of rows) {
+      board.copyWithin(COLS, 0, y * COLS);
+      board.fill(0, 0, COLS);
+    }
+  }
+
+  function clearLines() {
+    const rows = fullRows();
+    removeRows(rows);
+    return rows.length;
+  }
+
+  // Is this cell solid for T-spin corner purposes: wall, floor, or block.
+  function solid(x, y) {
+    return x < 0 || x >= COLS || y < 0 || y >= ROWS || board[y * COLS + x] !== 0;
   }
 
   // Guideline gravity: seconds per row at a level, capped at level 20.
@@ -134,6 +145,10 @@
   }
 
   // 7-bag: deal all seven in random order, then refill.
+  function refillQueue() {
+    while (state.queue.length < PREVIEW + 1) state.queue.push(nextFromBag());
+  }
+
   function nextFromBag() {
     if (state.bag.length === 0) {
       state.bag = [1, 2, 3, 4, 5, 6, 7];
@@ -154,10 +169,18 @@
   const SOFT_DROP = 20;    // soft drop is gravity times this
 
   const LINE_SCORE = [0, 100, 300, 500, 800];
+  const TSPIN_SCORE = [400, 800, 1200, 1600];
+  const MINI_SCORE = [100, 200, 400];
+  const PREVIEW = 5;
+  const CLEAR_FLASH = 120; // ms full rows stay on screen before collapsing
 
   const state = {
-    piece: null,        // { id, rot, x, y, lowest, resets }
+    piece: null,        // { id, rot, x, y, lowest, resets, spun, kick }
     bag: [],
+    queue: [],          // upcoming piece ids, front first
+    hold: 0,            // held piece id, 0 = none
+    holdUsed: false,    // one hold per piece
+    clearing: null,     // { rows, acc } while full rows flash; no piece exists
     gravityMs: 1000,
     gravityAcc: 0,
     lockAcc: 0,
@@ -173,15 +196,27 @@
     soft: false,
   };
 
-  function spawn() {
-    const id = nextFromBag();
+  function spawn(forcedId) {
+    refillQueue();
+    const id = forcedId || state.queue.shift();
+    refillQueue();
     const size = PIECES[id].size;
-    const p = { id, rot: 0, x: Math.floor((COLS - size) / 2), y: HIDDEN - 1, lowest: HIDDEN - 1, resets: 0 };
+    const p = { id, rot: 0, x: Math.floor((COLS - size) / 2), y: HIDDEN - 1, lowest: HIDDEN - 1, resets: 0, spun: false, kick: 0 };
     if (collides(id, 0, p.x, p.y)) p.y -= 1;          // guideline: try one row up
     if (collides(id, 0, p.x, p.y)) { gameOver(); return p; } // block-out; keep it for drawing
     state.lockAcc = 0;
     state.gravityAcc = 0;
+    state.holdUsed = false;
     return p;
+  }
+
+  function holdPiece() {
+    const p = state.piece;
+    if (!p || state.holdUsed) return;
+    const prev = state.hold;
+    state.hold = p.id;
+    state.piece = spawn(prev || undefined);
+    state.holdUsed = true; // spawn() cleared it; re-arm until this piece locks
   }
 
   function gameOver() {
@@ -191,7 +226,7 @@
 
   function reset() {
     board.fill(0);
-    state.bag = [];
+    state.bag = []; state.queue = []; state.hold = 0; state.holdUsed = false; state.clearing = null;
     state.score = 0; state.lines = 0; state.level = 1; state.b2b = false;
     state.gravityMs = gravityMs(1);
     state.gravityAcc = 0; state.lockAcc = 0;
@@ -220,6 +255,7 @@
     const p = state.piece;
     if (!p || collides(p.id, p.rot, p.x + dx, p.y + dy)) return false;
     p.x += dx; p.y += dy;
+    p.spun = false;
     touched(p);
     return true;
   }
@@ -233,6 +269,7 @@
       const nx = p.x + kicks[i][0], ny = p.y + kicks[i][1];
       if (!collides(p.id, to, nx, ny)) {
         p.rot = to; p.x = nx; p.y = ny;
+        p.spun = true; p.kick = i;
         touched(p);
         return true;
       }
@@ -240,29 +277,71 @@
     return false;
   }
 
-  function lockPiece() {
-    const lockedOut = lock(state.piece);
-    if (lockedOut) { gameOver(); return; }
-    const n = clearLines();
-    if (n) {
-      let pts = LINE_SCORE[n] * state.level;
-      if (n === 4 && state.b2b) pts = Math.floor(pts * 1.5);
-      state.b2b = n === 4;
-      addScore(pts);
+  // Guideline 3-corner rule. Only a T whose last maneuver was a rotation
+  // counts. Full if both corners on the side the T points to are solid, or
+  // the piece arrived by the 5th kick; otherwise mini.
+  function tspinKind(p) {
+    if (PIECES[p.id].name !== 'T' || !p.spun) return null;
+    const cx = p.x + 1, cy = p.y + 1; // centre of the 3x3 box
+    const tl = solid(cx - 1, cy - 1), tr = solid(cx + 1, cy - 1);
+    const bl = solid(cx - 1, cy + 1), br = solid(cx + 1, cy + 1);
+    if (tl + tr + bl + br < 3) return null;
+    const front = [[tl, tr], [tr, br], [bl, br], [tl, bl]][p.rot];
+    return (front[0] && front[1]) || p.kick === 4 ? 'full' : 'mini';
+  }
+
+  function award(n, spin) {
+    let pts;
+    if (spin === 'full') pts = TSPIN_SCORE[n];
+    else if (spin === 'mini') pts = MINI_SCORE[Math.min(n, 2)];
+    else pts = LINE_SCORE[n];
+    pts *= state.level;
+    if (n > 0) {
+      const hard = n === 4 || spin !== null;
+      if (hard && state.b2b) pts = Math.floor(pts * 1.5);
+      state.b2b = hard;
       state.lines += n;
       const level = 1 + Math.floor(state.lines / 10);
       if (level !== state.level) { state.level = level; state.gravityMs = gravityMs(level); }
     }
-    state.piece = spawn();
+    addScore(pts);
+  }
+
+  function lockPiece() {
+    const p = state.piece;
+    const spin = tspinKind(p);
+    const lockedOut = lock(p);
+    if (lockedOut) { gameOver(); return; }
+    const rows = fullRows();
+    award(rows.length, spin);
+    if (rows.length) {
+      state.piece = null;
+      state.clearing = { rows, acc: 0 };
+    } else {
+      state.piece = spawn();
+    }
     updateHud();
+  }
+
+  function finishClear() {
+    removeRows(state.clearing.rows);
+    state.clearing = null;
+    state.piece = spawn();
+  }
+
+  // Lowest y the piece can occupy from where it is: the ghost, and hard drop.
+  function dropY(p) {
+    let y = p.y;
+    while (!collides(p.id, p.rot, p.x, y + 1)) y++;
+    return y;
   }
 
   function hardDrop() {
     const p = state.piece;
     if (!p) return;
-    let rows = 0;
-    while (!collides(p.id, p.rot, p.x, p.y + 1)) { p.y++; rows++; }
-    addScore(rows * 2);
+    const y = dropY(p);
+    addScore((y - p.y) * 2);
+    if (y !== p.y) { p.y = y; p.spun = false; }
     lockPiece();
   }
 
@@ -270,6 +349,7 @@
     const p = state.piece;
     if (!collides(p.id, p.rot, p.x, p.y + 1)) {
       p.y += 1;
+      p.spun = false;
       if (state.soft) addScore(1);
       if (p.y > p.lowest) { p.lowest = p.y; p.resets = 0; state.lockAcc = 0; }
     }
@@ -277,7 +357,13 @@
   }
 
   function update(dt) {
-    if (state.over || !state.piece) return;
+    if (state.over) return;
+    if (state.clearing) {
+      state.clearing.acc += dt;
+      if (state.clearing.acc >= CLEAR_FLASH) finishClear();
+      return;
+    }
+    if (!state.piece) return;
 
     // horizontal auto-repeat: first move on press, then DAS, then ARR
     if (state.hDir) {
@@ -330,6 +416,7 @@
       case 'ArrowUp': case 'KeyX': tryRotate(1); break;
       case 'KeyZ': case 'ControlLeft': tryRotate(-1); break;
       case 'Space': hardDrop(); break;
+      case 'KeyC': case 'ShiftLeft': case 'ShiftRight': holdPiece(); break;
       default: return;
     }
     e.preventDefault();
@@ -393,28 +480,83 @@
 
   // ---------------------------------------------------------------- draw
 
-  const canvas = document.getElementById('board');
-  const ctx = canvas.getContext('2d');
   const DPR = window.devicePixelRatio || 1;
-  canvas.width = COLS * CELL * DPR;
-  canvas.height = VISIBLE * CELL * DPR;
-  canvas.style.width = COLS * CELL + 'px';
-  canvas.style.height = VISIBLE * CELL + 'px';
-  ctx.scale(DPR, DPR);
+  // Size a canvas in CSS pixels, back it at DPR, and remember the CSS size
+  // on the context so draw code never touches el.width again.
+  function fitCanvas(el, w, h) {
+    el.width = w * DPR; el.height = h * DPR;
+    el.style.width = w + 'px'; el.style.height = h + 'px';
+    const c = el.getContext('2d');
+    c.scale(DPR, DPR);
+    c.cssW = w; c.cssH = h;
+    return c;
+  }
+  const canvas = document.getElementById('board');
+  const ctx = fitCanvas(canvas, COLS * CELL, VISIBLE * CELL);
+  const PCELL = 20; // preview cell size
+  const nextCanvas = document.getElementById('next');
+  const nextCtx = fitCanvas(nextCanvas, 4 * PCELL + 20, PREVIEW * 3 * PCELL + 20);
+  const holdCanvas = document.getElementById('hold');
+  const holdCtx = fitCanvas(holdCanvas, 4 * PCELL + 20, 3 * PCELL + 20);
+
+  // A bevelled block at pixel (px, py) on context c with cell size n.
+  function block(c, px, py, n, color) {
+    c.fillStyle = color;
+    c.fillRect(px, py, n, n);
+    const b = Math.max(2, Math.round(n / 10));
+    c.fillStyle = 'rgba(255,255,255,0.18)';
+    c.fillRect(px, py, n, b);
+    c.fillRect(px, py, b, n);
+    c.fillStyle = 'rgba(0,0,0,0.25)';
+    c.fillRect(px, py + n - b, n, b);
+    c.fillRect(px + n - b, py, b, n);
+  }
 
   function drawCell(x, y, color) {
     // y is a board row; rows above HIDDEN are off-canvas and skipped
     const vy = y - HIDDEN;
     if (vy < 0) return;
-    const px = x * CELL, py = vy * CELL;
-    ctx.fillStyle = color;
-    ctx.fillRect(px, py, CELL, CELL);
-    ctx.fillStyle = 'rgba(255,255,255,0.18)';
-    ctx.fillRect(px, py, CELL, 3);
-    ctx.fillRect(px, py, 3, CELL);
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.fillRect(px, py + CELL - 3, CELL, 3);
-    ctx.fillRect(px + CELL - 3, py, 3, CELL);
+    block(ctx, x * CELL, vy * CELL, CELL, color);
+  }
+
+  function drawGhost(p, gy) {
+    if (gy === p.y) return;
+    const cells = PIECES[p.id].cells[p.rot];
+    ctx.strokeStyle = PIECES[p.id].color;
+    ctx.globalAlpha = 0.35;
+    ctx.lineWidth = 2;
+    for (let i = 0; i < 4; i++) {
+      const vy = gy + cells[i][1] - HIDDEN;
+      if (vy < 0) continue;
+      ctx.strokeRect((p.x + cells[i][0]) * CELL + 1.5, vy * CELL + 1.5, CELL - 3, CELL - 3);
+    }
+    ctx.globalAlpha = 1;
+  }
+
+  // Draw a piece in its spawn orientation centred in a w x h box on c.
+  function drawMini(c, id, x0, y0, w, h) {
+    const piece = PIECES[id];
+    const cells = piece.cells[0];
+    let minX = 9, maxX = -9, minY = 9, maxY = -9;
+    for (const [cx, cy] of cells) { minX = Math.min(minX, cx); maxX = Math.max(maxX, cx); minY = Math.min(minY, cy); maxY = Math.max(maxY, cy); }
+    const pw = (maxX - minX + 1) * PCELL, ph = (maxY - minY + 1) * PCELL;
+    const ox = x0 + (w - pw) / 2 - minX * PCELL, oy = y0 + (h - ph) / 2 - minY * PCELL;
+    for (const [cx, cy] of cells) block(c, ox + cx * PCELL, oy + cy * PCELL, PCELL, piece.color);
+  }
+
+  function drawPanels() {
+    nextCtx.fillStyle = '#171923';
+    nextCtx.fillRect(0, 0, nextCtx.cssW, nextCtx.cssH);
+    for (let i = 0; i < PREVIEW && i < state.queue.length; i++) {
+      drawMini(nextCtx, state.queue[i], 10, 10 + i * 3 * PCELL, 4 * PCELL, 3 * PCELL);
+    }
+    holdCtx.fillStyle = '#171923';
+    holdCtx.fillRect(0, 0, holdCtx.cssW, holdCtx.cssH);
+    if (state.hold) {
+      holdCtx.globalAlpha = state.holdUsed ? 0.4 : 1;
+      drawMini(holdCtx, state.hold, 10, 10, 4 * PCELL, 3 * PCELL);
+      holdCtx.globalAlpha = 1;
+    }
   }
 
   function draw() {
@@ -430,18 +572,23 @@
       ctx.beginPath(); ctx.moveTo(0, y * CELL + 0.5); ctx.lineTo(COLS * CELL, y * CELL + 0.5); ctx.stroke();
     }
 
+    const flashing = state.clearing ? state.clearing.rows : null;
     for (let y = HIDDEN; y < ROWS; y++) {
+      const flash = flashing && flashing.includes(y);
       for (let x = 0; x < COLS; x++) {
         const id = board[y * COLS + x];
-        if (id) drawCell(x, y, PIECES[id].color);
+        if (id) drawCell(x, y, flash ? '#ffffff' : PIECES[id].color);
       }
     }
 
     const p = state.piece;
     if (p) {
+      drawGhost(p, dropY(p));
       const cells = PIECES[p.id].cells[p.rot];
       for (let i = 0; i < 4; i++) drawCell(p.x + cells[i][0], p.y + cells[i][1], PIECES[p.id].color);
     }
+
+    drawPanels();
   }
 
   // ---------------------------------------------------------------- go
@@ -450,5 +597,5 @@
   requestAnimationFrame((t) => { last = t; frame(t); });
 
   // Debug handle for headless harnesses and the devtools console.
-  window.__tetris = { PIECES, KICKS, board, state, collides, lock, clearLines, gravityMs, spawn, reset, stepGravity, tryMove, tryRotate, hardDrop, update, frame, COLS, ROWS, HIDDEN };
+  window.__tetris = { PIECES, KICKS, board, state, collides, lock, clearLines, fullRows, removeRows, gravityMs, spawn, reset, stepGravity, tryMove, tryRotate, hardDrop, holdPiece, tspinKind, dropY, finishClear, update, frame, COLS, ROWS, HIDDEN, CLEAR_FLASH };
 })();
