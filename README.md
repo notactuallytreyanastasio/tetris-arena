@@ -88,6 +88,10 @@ first minute, so the interesting differences were smaller.
 - **agent-8**: perfect-clear bonus (800/1200/1800/2000 x level when the
   board empties). Taken; checked after the rows collapse and over the whole
   array, hidden rows included.
+- **agent-10**: the observation that every branch stopped charging DAS
+  during the line-clear flash, so a held direction hitched for a full DAS on
+  the next piece. Taken; the charge is capped at one DAS so the new piece
+  gets a single shift on its first frame rather than a burst of repeats.
 - **agent-1**: a 40-row board so no cell can ever be above the array and
   collision needs no negative-y guard. Read, not taken: the guard here is one
   line, and a 20-row render offset in every draw call costs more than it
